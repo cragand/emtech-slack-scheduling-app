@@ -109,6 +109,21 @@ just the shared one. An Exchange Online **Application Access Policy** can scope
 this app down to only the shared scheduling mailbox — likely to speed up
 approval from a security-conscious admin.
 
+## Operational considerations for live/autonomous use
+
+- **Client secret expiration**: Azure AD client secrets expire on whatever
+  schedule IT sets (commonly 6–24 months). Once deployed and running
+  unattended, an expired secret means the app fails silently until someone
+  rotates `MS_CLIENT_SECRET` via `slack env add`. Worth asking IT for the
+  expiration date up front and calendaring a reminder, or asking whether a
+  longer-lived credential type is available.
+- **Deployed env vars are separate from `.env`**: see
+  [Environment variables](#environment-variables) above — `slack env add` has
+  to be run once against the deployed app; local `.env` values don't carry
+  over.
+- `slack run` is local-dev-only and requires this machine/terminal to stay on;
+  it is not how the app runs for real usage. See [Deploying](#deploying).
+
 ## Known limitation: attendees' free/busy status
 
 The event is created with `showAs: "free"`, but this only controls the

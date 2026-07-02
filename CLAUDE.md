@@ -110,3 +110,12 @@ the Azure AD app registration (Tenant ID/Client ID/Client Secret) is pending
 IT approval. `.env.example` documents the expected variable names. Don't
 assume credentials exist — verify `.env` is present and populated before
 claiming an end-to-end test actually exercised the Graph API call.
+
+## Operational considerations once deployed (see README for detail)
+
+`slack run` is local-dev-only (needs this machine/terminal running) — real
+usage requires `slack deploy` to Slack-hosted infra, plus `slack env add` for
+each production env var (separate from local `.env`). Also: Azure AD client
+secrets expire on IT's schedule — an autonomous deployment will fail silently
+post-expiration until `MS_CLIENT_SECRET` is rotated. Neither of these is set
+up yet as of this writing.
