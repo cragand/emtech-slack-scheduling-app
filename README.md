@@ -92,6 +92,9 @@ never used once deployed.
 
 ### Getting credentials from IT
 
+See [`IT_REQUEST.md`](./IT_REQUEST.md) for a ready-to-forward version of this
+ask.
+
 This app authenticates to Microsoft Graph via the OAuth2 **client credentials**
 flow — it runs unattended (triggered by a Slack List update), so it has to
 authenticate as itself rather than as a signed-in person. That requires:
