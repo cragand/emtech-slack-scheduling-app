@@ -15,7 +15,8 @@ export const CreateCalendarEventDefinition = DefineFunction({
     properties: {
       submitter_alias: {
         type: Schema.types.string,
-        description: "Alias/name of the request submitter, used in the event title",
+        description:
+          "Alias/name of the request submitter, used in the event title",
       },
       submitter_email: {
         type: Schema.types.string,
@@ -98,7 +99,8 @@ async function getGraphAccessToken(
 
   if (!response.ok) {
     throw new Error(
-      `Failed to acquire Graph access token: ${response.status} ${await response.text()}`,
+      `Failed to acquire Graph access token: ${response.status} ${await response
+        .text()}`,
     );
   }
 
@@ -107,7 +109,7 @@ async function getGraphAccessToken(
 }
 
 // Title format: "<submitter alias> - <request type> - <start date>"
-function formatTitleDate(isoDateTime: string): string {
+export function formatTitleDate(isoDateTime: string): string {
   const date = new Date(isoDateTime);
   return date.toLocaleDateString("en-US", {
     year: "numeric",
@@ -184,7 +186,8 @@ export default SlackFunction(
     if (!response.ok) {
       return {
         error:
-          `Failed to create calendar event: ${response.status} ${await response.text()}`,
+          `Failed to create calendar event: ${response.status} ${await response
+            .text()}`,
       };
     }
 
