@@ -125,18 +125,33 @@ historical record. Here's what IT actually set up in response:
 
 ## Outlook categories
 
-The event's `categories` field drives calendar color-coding, set from the step's
-`category` input (deliberately separate from `request_type`, which only affects
-the title text). The value must **exactly match** a category already configured
-on the shared mailbox by IT — it's a plain string, not validated against a fixed
-list in code, since the list grows over time (see below).
+The event's `categories` field drives calendar color-coding. There's no separate
+`category` input in the step — it's derived automatically from `request_type`
+(the workflow's "Request Type" dropdown) via a lookup table in
+`create_calendar_event.ts`, since the mapping is fully deterministic and a
+manually-mapped extra field turned out to be redundant (and was the actual cause
+of an early "invalid parameter" failure, since the step wasn't re-configured
+after that field was added).
 
-Currently configured: `OOTO`, `4x10 OOTO`, `WFH`, `On-Site`.
+Current mapping (`REQUEST_TYPE_TO_CATEGORY` in `create_calendar_event.ts`):
 
-To add a per-site category (e.g. `On-Site - Seattle`), send IT the site name and
-they'll add a matching category + color on the mailbox. Update this list once
-they confirm the new category name, since Workflow Builder needs the exact
-spelling to map to it.
+| Request Type        | Outlook category                                                                      |
+| ------------------- | ------------------------------------------------------------------------------------- |
+| Sick                | `OOTO`                                                                                |
+| Vacation            | `OOTO`                                                                                |
+| OOTO                | `OOTO`                                                                                |
+| 4x10 OOTO           | `4x10 OOTO`                                                                           |
+| WFH                 | `WFH`                                                                                 |
+| Location Assignment | `On-Site`                                                                             |
+| Scheduling          | _(removed from the dropdown — handled via direct message instead, no calendar event)_ |
+
+If the "Request Type" dropdown ever gets a new option,
+`REQUEST_TYPE_TO_CATEGORY` needs a matching entry — otherwise the step fails
+cleanly with `No Outlook
+category mapping configured for request type "..."`
+rather than silently mis-categorizing (or, worse, silently succeeding with the
+wrong color). To add a new per-site category (e.g. `On-Site - Seattle`) to the
+mailbox itself, send IT the site name and they'll configure it with a color.
 
 ## Operational considerations for live/autonomous use
 
@@ -165,9 +180,10 @@ entry) — see `functions/create_calendar_event.ts` for where this is implemente
 deno test
 ```
 
-`functions/create_calendar_event_test.ts` covers the title formatting, the exact
-request sent to Microsoft Graph (subject, attendees, `showAs`, `categories`),
-and the missing-env-var / token-failure error paths — all with `fetch` mocked
+`functions/create_calendar_event_test.ts` covers the title formatting, the
+request-type-to-category mapping, the exact request sent to Microsoft Graph
+(subject, attendees, `showAs`, `categories`), and the missing-env-var /
+unrecognized-request-type / token-failure error paths — all with `fetch` mocked
 via `@std/testing/mock`, so no live credential or network call is needed to run
 it. `functions/sample_function_test.ts` is unrelated, from the default scaffold
 (see below).

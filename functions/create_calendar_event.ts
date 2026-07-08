@@ -24,12 +24,8 @@ export const CreateCalendarEventDefinition = DefineFunction({
       },
       request_type: {
         type: Schema.types.string,
-        description: "Type of request, used in the event title",
-      },
-      category: {
-        type: Schema.types.string,
         description:
-          "Outlook category for calendar color-coding. Must exactly match a category pre-configured on the shared mailbox by IT (currently: OOTO, 4x10 OOTO, WFH, On-Site, plus any per-site categories added later).",
+          "Type of request (from the Request Type dropdown), used in the event title and mapped internally to an Outlook category",
       },
       start_date_time: {
         type: Schema.types.string,
@@ -57,7 +53,6 @@ export const CreateCalendarEventDefinition = DefineFunction({
       "submitter_alias",
       "submitter_email",
       "request_type",
-      "category",
       "start_date_time",
       "end_date_time",
     ],
@@ -124,6 +119,25 @@ export function formatTitleDate(isoDateTime: string): string {
   });
 }
 
+// Maps the workflow's "Request Type" dropdown to the Outlook category
+// pre-configured on the shared mailbox by IT. Keep in sync with both the
+// dropdown's options in Workflow Builder and README's "Outlook categories"
+// section whenever either changes.
+const REQUEST_TYPE_TO_CATEGORY: Record<string, string> = {
+  "Sick": "OOTO",
+  "OOTO": "OOTO",
+  "4x10 OOTO": "4x10 OOTO",
+  "WFH": "WFH",
+  "Vacation": "OOTO",
+  "Location Assignment": "On-Site",
+};
+
+export function getCategoryForRequestType(
+  requestType: string,
+): string | undefined {
+  return REQUEST_TYPE_TO_CATEGORY[requestType];
+}
+
 export default SlackFunction(
   CreateCalendarEventDefinition,
   async ({ inputs, env }) => {
@@ -131,7 +145,6 @@ export default SlackFunction(
       submitter_alias,
       submitter_email,
       request_type,
-      category,
       start_date_time,
       end_date_time,
       description,
@@ -143,6 +156,15 @@ export default SlackFunction(
     if (!mailbox) {
       return { error: "Missing MS_SHARED_MAILBOX environment variable" };
     }
+
+    const category = getCategoryForRequestType(request_type);
+    if (!category) {
+      return {
+        error:
+          `No Outlook category mapping configured for request type "${request_type}"`,
+      };
+    }
+
     const timeZone = env["MS_EVENT_TIMEZONE"] || "UTC";
 
     let accessToken: string;

@@ -69,19 +69,23 @@ the workspace-selection prompt that triggers this.
   `graph.microsoft.com` — the Deno SDK sandboxes `fetch` to declared domains.
 
 - **`functions/create_calendar_event.ts`** — the one file that matters.
-  - `input_parameters`: submitter alias/email, request type, `category`,
-    start/end ISO 8601 datetimes, description, location, and an array of
-    additional attendee emails (mapped in Workflow Builder from the
-    triggering Slack List row / form fields).
-  - `category` is deliberately a separate input from `request_type`, not
-    reused — `request_type` only affects the human-readable title text,
-    while `category` must exactly match one of the categories IT
-    pre-configured on the shared mailbox (`OOTO`, `4x10 OOTO`, `WFH`,
-    `On-Site`, currently — see README's "Outlook categories" section for the
-    live list) and gets sent as Graph's `categories` field for calendar
-    color-coding. It's a plain string, not a code-enforced enum — the valid
-    set grows over time as IT adds per-site categories, and enum-locking it
-    here would mean a redeploy every time IT adds one.
+  - `input_parameters`: submitter alias/email, request type, start/end ISO
+    8601 datetimes, description, location, and an array of additional
+    attendee emails (mapped in Workflow Builder from the triggering Slack
+    List row / form fields).
+  - There is **no separate `category` input** — a first attempt added one,
+    but it caused a real "failed to start due to an invalid parameter"
+    failure in production because the Workflow Builder step wasn't
+    re-configured to map the new required field after it was added. It also
+    turned out unnecessary: the request-type-to-category mapping is fully
+    deterministic (`Sick`→`OOTO`, `Vacation`→`OOTO`, `OOTO`→`OOTO`,
+    `4x10 OOTO`→`4x10 OOTO`, `WFH`→`WFH`, `Location Assignment`→`On-Site`),
+    so `getCategoryForRequestType()` / `REQUEST_TYPE_TO_CATEGORY` derives it
+    from `request_type` in code instead. If the "Request Type" dropdown in
+    Workflow Builder ever gets a new option, this lookup table needs a
+    matching entry (see README's "Outlook categories" section) — an unknown
+    `request_type` returns a clean `{ error: "No Outlook category mapping
+    configured..." }` rather than guessing or silently omitting the category.
   - `getGraphAccessToken()`: does the OAuth2 client-credentials POST to
     `https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token` to get an
     app-only bearer token — no user session involved, since the workflow runs
@@ -90,7 +94,7 @@ the workspace-selection prompt that triggers this.
     the attendee list (submitter + additional attendees, all as Graph
     `attendees` so they get real Outlook invites), and POSTs to
     `/v1.0/users/{MS_SHARED_MAILBOX}/events` with `showAs: "free"` and
-    `categories: [category]`.
+    `categories: [category]` (category derived as above).
   - Env vars (`env` destructured from the handler's context, not
     `Deno.env`): `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`,
     `MS_SHARED_MAILBOX`, `MS_EVENT_TIMEZONE`. All required-but-missing cases

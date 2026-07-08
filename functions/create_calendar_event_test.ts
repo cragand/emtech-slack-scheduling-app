@@ -3,6 +3,7 @@ import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
 import { stub } from "@std/testing/mock";
 import CreateCalendarEvent, {
   formatTitleDate,
+  getCategoryForRequestType,
 } from "./create_calendar_event.ts";
 
 const { createContext } = SlackFunctionTester("create_calendar_event");
@@ -18,8 +19,7 @@ const FAKE_ENV = {
 const BASE_INPUTS = {
   submitter_alias: "jdoe",
   submitter_email: "jdoe@example.com",
-  request_type: "Time Off",
-  category: "OOTO",
+  request_type: "Sick",
   start_date_time: "2026-08-01T09:00:00",
   end_date_time: "2026-08-01T17:00:00",
   description: "Out of office",
@@ -29,6 +29,17 @@ const BASE_INPUTS = {
 
 Deno.test("formatTitleDate formats an ISO datetime as a short date", () => {
   assertEquals(formatTitleDate("2026-08-01T09:00:00"), "Aug 1, 2026");
+});
+
+Deno.test("getCategoryForRequestType maps every known Request Type value", () => {
+  assertEquals(getCategoryForRequestType("Sick"), "OOTO");
+  assertEquals(getCategoryForRequestType("Vacation"), "OOTO");
+  assertEquals(getCategoryForRequestType("OOTO"), "OOTO");
+  assertEquals(getCategoryForRequestType("4x10 OOTO"), "4x10 OOTO");
+  assertEquals(getCategoryForRequestType("WFH"), "WFH");
+  assertEquals(getCategoryForRequestType("Location Assignment"), "On-Site");
+  assertEquals(getCategoryForRequestType("Scheduling"), undefined);
+  assertEquals(getCategoryForRequestType("Something Unrecognized"), undefined);
 });
 
 Deno.test("create_calendar_event happy path sends the expected Graph request", async () => {
@@ -65,7 +76,7 @@ Deno.test("create_calendar_event happy path sends the expected Graph request", a
 
   assertEquals(error, undefined);
   assertExists(capturedBody);
-  assertEquals(capturedBody?.subject, "jdoe - Time Off - Aug 1, 2026");
+  assertEquals(capturedBody?.subject, "jdoe - Sick - Aug 1, 2026");
   assertEquals(capturedBody?.showAs, "free");
   assertEquals(capturedBody?.attendees, [
     { emailAddress: { address: "jdoe@example.com" }, type: "required" },
@@ -100,6 +111,30 @@ Deno.test("create_calendar_event fails fast when MS_SHARED_MAILBOX is missing", 
 
   assertExists(error);
   assertStringIncludes(error, "MS_SHARED_MAILBOX");
+  assertEquals(outputs, undefined);
+});
+
+Deno.test("create_calendar_event fails fast on an unrecognized request_type", async () => {
+  using _stubFetch = stub(
+    globalThis,
+    "fetch",
+    () => {
+      throw new Error(
+        "fetch should never be called for an unrecognized request_type",
+      );
+    },
+  );
+
+  const { outputs, error } = await CreateCalendarEvent(
+    createContext({
+      inputs: { ...BASE_INPUTS, request_type: "Scheduling" },
+      env: FAKE_ENV,
+    }),
+  );
+
+  assertExists(error);
+  assertStringIncludes(error, "No Outlook category mapping");
+  assertStringIncludes(error, "Scheduling");
   assertEquals(outputs, undefined);
 });
 
