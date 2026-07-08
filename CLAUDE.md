@@ -95,6 +95,15 @@ the workspace-selection prompt that triggers this.
     `attendees` so they get real Outlook invites), and POSTs to
     `/v1.0/users/{MS_SHARED_MAILBOX}/events` with `showAs: "free"` and
     `categories: [category]` (category derived as above).
+  - `formatTitleDate(isoDateTime, timeZone)` **requires** an explicit
+    `timeZone` argument — always pass the same `timeZone` variable used for
+    the Graph event itself (derived from `MS_EVENT_TIMEZONE`). A real bug
+    already happened here: without an explicit `timeZone`, JS's default date
+    formatting silently uses whatever zone the process happens to be running
+    in, which can differ from `MS_EVENT_TIMEZONE` — the event landed on the
+    correct day (Graph got the explicit zone), but the title's date text
+    showed the wrong day, near a midnight boundary. Don't remove that
+    parameter or call `formatTitleDate` without it.
   - Env vars (`env` destructured from the handler's context, not
     `Deno.env`): `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`,
     `MS_SHARED_MAILBOX`, `MS_EVENT_TIMEZONE`. All required-but-missing cases

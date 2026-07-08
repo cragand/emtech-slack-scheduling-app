@@ -20,15 +20,36 @@ const BASE_INPUTS = {
   submitter_alias: "jdoe",
   submitter_email: "jdoe@example.com",
   request_type: "Sick",
-  start_date_time: "2026-08-01T09:00:00",
-  end_date_time: "2026-08-01T17:00:00",
+  // Explicit UTC ("Z") times rather than naive local strings, so this test
+  // is deterministic regardless of the machine/CI running it — 13:00Z /
+  // 21:00Z is 09:00 / 17:00 America/New_York (EDT, UTC-4 in August).
+  start_date_time: "2026-08-01T13:00:00Z",
+  end_date_time: "2026-08-01T21:00:00Z",
   description: "Out of office",
   location: "N/A",
   additional_attendees: ["manager@example.com", "backup@example.com"],
 };
 
-Deno.test("formatTitleDate formats an ISO datetime as a short date", () => {
-  assertEquals(formatTitleDate("2026-08-01T09:00:00"), "Aug 1, 2026");
+Deno.test("formatTitleDate formats using the given timeZone, not the system default", () => {
+  assertEquals(
+    formatTitleDate("2026-08-01T13:00:00Z", "America/New_York"),
+    "Aug 1, 2026",
+  );
+});
+
+Deno.test("formatTitleDate can land on a different calendar day depending on timeZone", () => {
+  // 04:00 UTC is still July 9 in America/Los_Angeles (PDT, UTC-7) but
+  // already July 10 further east — this is the exact class of bug that
+  // caused the title's date to disagree with the actual event date when
+  // formatTitleDate didn't take an explicit timeZone.
+  assertEquals(
+    formatTitleDate("2026-07-10T04:00:00Z", "America/Los_Angeles"),
+    "Jul 9, 2026",
+  );
+  assertEquals(
+    formatTitleDate("2026-07-10T04:00:00Z", "America/New_York"),
+    "Jul 10, 2026",
+  );
 });
 
 Deno.test("getCategoryForRequestType maps every known Request Type value", () => {

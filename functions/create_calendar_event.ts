@@ -110,12 +110,18 @@ async function getGraphAccessToken(
 }
 
 // Title format: "<submitter alias> - <request type> - <start date>"
-export function formatTitleDate(isoDateTime: string): string {
+// timeZone must match the event's own timeZone (MS_EVENT_TIMEZONE) so the
+// title's date can never disagree with which day the event actually lands
+// on — without an explicit timeZone here, this would silently fall back to
+// whatever zone the process happens to be running in, which can differ from
+// MS_EVENT_TIMEZONE depending on where the app is running.
+export function formatTitleDate(isoDateTime: string, timeZone: string): string {
   const date = new Date(isoDateTime);
   return date.toLocaleDateString("en-US", {
     year: "numeric",
     month: "short",
     day: "numeric",
+    timeZone,
   });
 }
 
@@ -175,7 +181,7 @@ export default SlackFunction(
     }
 
     const title = `${submitter_alias} - ${request_type} - ${
-      formatTitleDate(start_date_time)
+      formatTitleDate(start_date_time, timeZone)
     }`;
 
     const attendees = [
