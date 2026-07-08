@@ -80,13 +80,13 @@ sample trigger (see [Leftover scaffold files](#leftover-scaffold-files)).
 
 Copy `.env.example` to `.env` and fill in real values once IT provides them:
 
-| Variable            | Purpose                                                                           |
-| ------------------- | --------------------------------------------------------------------------------- |
-| `MS_TENANT_ID`      | Identifies Emtech's Azure AD directory                                            |
-| `MS_CLIENT_ID`      | Identifies this app's registration within that directory                          |
-| `MS_CLIENT_SECRET`  | The app's credential, used to authenticate as itself (no user login involved)     |
-| `MS_SHARED_MAILBOX` | The shared scheduling mailbox: `teamavailability@emtech.us` ("Team Availability") |
-| `MS_EVENT_TIMEZONE` | IANA timezone used for the event's start/end (e.g. `America/New_York`)            |
+| Variable            | Purpose                                                                                                   |
+| ------------------- | --------------------------------------------------------------------------------------------------------- |
+| `MS_TENANT_ID`      | Identifies Emtech's Azure AD directory                                                                    |
+| `MS_CLIENT_ID`      | Identifies this app's registration within that directory                                                  |
+| `MS_CLIENT_SECRET`  | The app's credential, used to authenticate as itself (no user login involved)                             |
+| `MS_SHARED_MAILBOX` | The shared scheduling mailbox: `teamavailability@emtech.us` ("Team Availability")                         |
+| `MS_EVENT_TIMEZONE` | IANA timezone used for the event's start/end: `America/Los_Angeles` (Emtech operations are Pacific-based) |
 
 `slack run` automatically picks up `.env` locally. For the deployed app, set
 these with `slack env add <NAME> <VALUE>` instead — `.env` is git-ignored and
@@ -152,6 +152,30 @@ category mapping configured for request type "..."`
 rather than silently mis-categorizing (or, worse, silently succeeding with the
 wrong color). To add a new per-site category (e.g. `On-Site - Seattle`) to the
 mailbox itself, send IT the site name and they'll configure it with a color.
+
+## All-day events
+
+Every event this step creates is a full-day calendar entry (Graph's
+`isAllDay: true`), regardless of request type — there's no clock-time component,
+matching how absence/status requests are actually used. A couple of details
+worth knowing:
+
+- **`end_date_time` is the _last_ day of the request, inclusive** — e.g. a
+  single-day request has the same date for `start_date_time` and
+  `end_date_time`. Graph itself requires an _exclusive_ end (the day _after_ the
+  last day), so `getAllDayEventRange()` adds one calendar day internally before
+  sending it to Graph. If the workflow's date field ever changes to already
+  provide an exclusive end date, this would double-count by a day — check
+  `getAllDayEventRange()`'s tests if that's ever suspected.
+- **Time-of-day in the inputs is ignored.** Only the calendar date (as observed
+  in `MS_EVENT_TIMEZONE`) matters — `getAllDayEventRange()` deliberately
+  re-derives the date from the configured timezone rather than trusting the raw
+  string's own offset. This matters because a date/time string's offset and
+  `MS_EVENT_TIMEZONE` can disagree about which calendar day it falls on near
+  midnight; a real bug of exactly this kind (in the event's title, not its
+  placement) already happened once — see `formatTitleDate()` and
+  `getAllDayEventRange()` in `functions/create_calendar_event.ts` for how both
+  now consistently use `MS_EVENT_TIMEZONE` to decide "which day is this."
 
 ## Operational considerations for live/autonomous use
 

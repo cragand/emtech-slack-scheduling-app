@@ -3,6 +3,7 @@ import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
 import { stub } from "@std/testing/mock";
 import CreateCalendarEvent, {
   formatTitleDate,
+  getAllDayEventRange,
   getCategoryForRequestType,
 } from "./create_calendar_event.ts";
 
@@ -13,7 +14,8 @@ const FAKE_ENV = {
   MS_CLIENT_ID: "fake-client-id",
   MS_CLIENT_SECRET: "fake-client-secret",
   MS_SHARED_MAILBOX: "emtech-scheduling@example.com",
-  MS_EVENT_TIMEZONE: "America/New_York",
+  // Matches the real MS_EVENT_TIMEZONE — Emtech operations are Pacific-based.
+  MS_EVENT_TIMEZONE: "America/Los_Angeles",
 };
 
 const BASE_INPUTS = {
@@ -21,10 +23,10 @@ const BASE_INPUTS = {
   submitter_email: "jdoe@example.com",
   request_type: "Sick",
   // Explicit UTC ("Z") times rather than naive local strings, so this test
-  // is deterministic regardless of the machine/CI running it — 13:00Z /
-  // 21:00Z is 09:00 / 17:00 America/New_York (EDT, UTC-4 in August).
-  start_date_time: "2026-08-01T13:00:00Z",
-  end_date_time: "2026-08-01T21:00:00Z",
+  // is deterministic regardless of the machine/CI running it — 16:00Z is
+  // 09:00 America/Los_Angeles (PDT, UTC-7 in August).
+  start_date_time: "2026-08-01T16:00:00Z",
+  end_date_time: "2026-08-01T20:00:00Z",
   description: "Out of office",
   location: "N/A",
   additional_attendees: ["manager@example.com", "backup@example.com"],
@@ -32,14 +34,14 @@ const BASE_INPUTS = {
 
 Deno.test("formatTitleDate formats using the given timeZone, not the system default", () => {
   assertEquals(
-    formatTitleDate("2026-08-01T13:00:00Z", "America/New_York"),
+    formatTitleDate("2026-08-01T16:00:00Z", "America/Los_Angeles"),
     "Aug 1, 2026",
   );
 });
 
 Deno.test("formatTitleDate can land on a different calendar day depending on timeZone", () => {
   // 04:00 UTC is still July 9 in America/Los_Angeles (PDT, UTC-7) but
-  // already July 10 further east — this is the exact class of bug that
+  // already July 10 in UTC itself — this is the exact class of bug that
   // caused the title's date to disagree with the actual event date when
   // formatTitleDate didn't take an explicit timeZone.
   assertEquals(
@@ -47,9 +49,58 @@ Deno.test("formatTitleDate can land on a different calendar day depending on tim
     "Jul 9, 2026",
   );
   assertEquals(
-    formatTitleDate("2026-07-10T04:00:00Z", "America/New_York"),
+    formatTitleDate("2026-07-10T04:00:00Z", "UTC"),
     "Jul 10, 2026",
   );
+});
+
+Deno.test("getAllDayEventRange covers a single day with an exclusive end", () => {
+  // 07:00Z is midnight America/Los_Angeles (PDT, UTC-7) on July 9.
+  const range = getAllDayEventRange(
+    "2026-07-09T07:00:00Z",
+    "2026-07-09T07:00:00Z",
+    "America/Los_Angeles",
+  );
+  assertEquals(range.start, "2026-07-09T00:00:00");
+  assertEquals(range.end, "2026-07-10T00:00:00");
+});
+
+Deno.test("getAllDayEventRange spans multiple days correctly", () => {
+  const range = getAllDayEventRange(
+    "2026-07-09T07:00:00Z",
+    "2026-07-11T07:00:00Z",
+    "America/Los_Angeles",
+  );
+  assertEquals(range.start, "2026-07-09T00:00:00");
+  assertEquals(range.end, "2026-07-12T00:00:00");
+});
+
+Deno.test("getAllDayEventRange rolls over month and year boundaries", () => {
+  const monthRollover = getAllDayEventRange(
+    "2026-07-31T07:00:00Z",
+    "2026-07-31T07:00:00Z",
+    "America/Los_Angeles",
+  );
+  assertEquals(monthRollover.end, "2026-08-01T00:00:00");
+
+  // December is PST (UTC-8), not PDT — midnight PST Dec 31 is 08:00Z.
+  const yearRollover = getAllDayEventRange(
+    "2026-12-31T08:00:00Z",
+    "2026-12-31T08:00:00Z",
+    "America/Los_Angeles",
+  );
+  assertEquals(yearRollover.end, "2027-01-01T00:00:00");
+});
+
+Deno.test("getAllDayEventRange uses the calendar day observed in timeZone, not the raw UTC date", () => {
+  // 05:00 UTC on July 10 is still 22:00 on July 9 in America/Los_Angeles (PDT).
+  const range = getAllDayEventRange(
+    "2026-07-10T05:00:00Z",
+    "2026-07-10T05:00:00Z",
+    "America/Los_Angeles",
+  );
+  assertEquals(range.start, "2026-07-09T00:00:00");
+  assertEquals(range.end, "2026-07-10T00:00:00");
 });
 
 Deno.test("getCategoryForRequestType maps every known Request Type value", () => {
@@ -104,10 +155,15 @@ Deno.test("create_calendar_event happy path sends the expected Graph request", a
     { emailAddress: { address: "manager@example.com" }, type: "required" },
     { emailAddress: { address: "backup@example.com" }, type: "required" },
   ]);
-  assertEquals(
-    (capturedBody?.start as { dateTime: string; timeZone: string }).timeZone,
-    "America/New_York",
-  );
+  assertEquals(capturedBody?.isAllDay, true);
+  assertEquals(capturedBody?.start, {
+    dateTime: "2026-08-01T00:00:00",
+    timeZone: "America/Los_Angeles",
+  });
+  assertEquals(capturedBody?.end, {
+    dateTime: "2026-08-02T00:00:00",
+    timeZone: "America/Los_Angeles",
+  });
   assertEquals(capturedBody?.categories, ["OOTO"]);
   assertEquals(outputs?.event_id, "AAMkAGI1AAA=");
   assertEquals(

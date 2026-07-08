@@ -29,11 +29,13 @@ export const CreateCalendarEventDefinition = DefineFunction({
       },
       start_date_time: {
         type: Schema.types.string,
-        description: "Event start, ISO 8601 (e.g. 2026-07-10T09:00:00)",
+        description:
+          "First day of the request, ISO 8601 (e.g. 2026-07-10T09:00:00). Always creates a full-day event — the time-of-day portion is ignored.",
       },
       end_date_time: {
         type: Schema.types.string,
-        description: "Event end, ISO 8601 (e.g. 2026-07-10T17:00:00)",
+        description:
+          "Last day of the request, inclusive (e.g. a single-day request has the same date as start_date_time). ISO 8601; time-of-day is ignored.",
       },
       description: {
         type: Schema.types.string,
@@ -125,6 +127,68 @@ export function formatTitleDate(isoDateTime: string, timeZone: string): string {
   });
 }
 
+// Calendar-date parts (year/month/day) as observed in the given IANA
+// timeZone — used instead of raw string-slicing since the offset in
+// isoDateTime (if any) can put it on a different calendar day than what's
+// intended once viewed in timeZone.
+function getCalendarDateParts(
+  isoDateTime: string,
+  timeZone: string,
+): { year: number; month: number; day: number } {
+  const date = new Date(isoDateTime);
+  // en-CA formats as YYYY-MM-DD, convenient to split.
+  const formatted = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+  const [year, month, day] = formatted.split("-").map(Number);
+  return { year, month, day };
+}
+
+type DateParts = { year: number; month: number; day: number };
+
+// Adds `days` calendar days to a Y/M/D triple. Uses UTC as a neutral, DST-free
+// computation frame — this is pure calendar arithmetic on already-extracted
+// date parts, not a timezone conversion.
+function addCalendarDays(parts: DateParts, days: number): DateParts {
+  const utc = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  utc.setUTCDate(utc.getUTCDate() + days);
+  return {
+    year: utc.getUTCFullYear(),
+    month: utc.getUTCMonth() + 1,
+    day: utc.getUTCDate(),
+  };
+}
+
+function toMidnightIso({ year, month, day }: DateParts): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${year}-${pad(month)}-${pad(day)}T00:00:00`;
+}
+
+// Computes the start/end dateTime strings for an all-day Graph event. Graph
+// requires all-day start/end to both be midnight in the same timeZone, with
+// an *exclusive* end — i.e., the day after the last day of the event, not
+// the last day itself. endDateTime here is the workflow's "end date," which
+// is the inclusive last day someone is out, so this adds one calendar day.
+// https://learn.microsoft.com/en-us/graph/api/resources/event#properties
+export function getAllDayEventRange(
+  startDateTime: string,
+  endDateTime: string,
+  timeZone: string,
+): { start: string; end: string } {
+  const startParts = getCalendarDateParts(startDateTime, timeZone);
+  const endParts = addCalendarDays(
+    getCalendarDateParts(endDateTime, timeZone),
+    1,
+  );
+  return {
+    start: toMidnightIso(startParts),
+    end: toMidnightIso(endParts),
+  };
+}
+
 // Maps the workflow's "Request Type" dropdown to the Outlook category
 // pre-configured on the shared mailbox by IT. Keep in sync with both the
 // dropdown's options in Workflow Builder and README's "Outlook categories"
@@ -192,11 +256,18 @@ export default SlackFunction(
       })),
     ];
 
+    const allDayRange = getAllDayEventRange(
+      start_date_time,
+      end_date_time,
+      timeZone,
+    );
+
     const eventBody = {
       subject: title,
       body: { contentType: "Text", content: description ?? "" },
-      start: { dateTime: start_date_time, timeZone },
-      end: { dateTime: end_date_time, timeZone },
+      start: { dateTime: allDayRange.start, timeZone },
+      end: { dateTime: allDayRange.end, timeZone },
+      isAllDay: true,
       location: { displayName: location ?? "" },
       attendees,
       // Keeps the shared mailbox's own calendar entry shown as free; does not
