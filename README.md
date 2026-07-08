@@ -39,13 +39,20 @@ Workflow Builder workflow (built in Slack UI, not in this repo)
       an Exchange Application Access Policy — see
       [Getting credentials from IT](#getting-credentials-from-it) for the final
       setup details
-- [ ] Actual Tenant ID / Client ID / Client Secret values added to `.env`
-- [ ] End-to-end test once credentials land
+- [x] Real Tenant ID / Client ID / Client Secret values added to `.env`
+- [x] End-to-end test against the real shared mailbox — title, category color,
+      free/busy, all-day range, and multi-day date handling all confirmed
+      correct
+- [ ] Test with additional attendees included (only tested with just the
+      submitter so far — see
+      [Known limitation](#known-limitation-attendees-freebusy-status) for what
+      to expect once that's tried)
+- [ ] Deploy to Slack-hosted infra (`slack deploy`) for real/autonomous use —
+      still only running via local `slack run` today
 
-Until `.env` has real values, running the step will fail fast with a clear error
-(`Missing MS_TENANT_ID, MS_CLIENT_ID, or MS_CLIENT_SECRET environment
-variable`)
-rather than doing anything destructive — this is expected, not a bug.
+Real end-to-end testing is working locally via `slack run`. See
+[Operational considerations](#operational-considerations-for-liveautonomous-use)
+for what's still needed before this runs unattended in production.
 
 ## Prerequisites
 
