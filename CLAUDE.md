@@ -69,10 +69,19 @@ the workspace-selection prompt that triggers this.
   `graph.microsoft.com` — the Deno SDK sandboxes `fetch` to declared domains.
 
 - **`functions/create_calendar_event.ts`** — the one file that matters.
-  - `input_parameters`: submitter alias/email, request type, start/end
-    ISO 8601 datetimes, description, location, and an array of additional
-    attendee emails (mapped in Workflow Builder from the triggering Slack List
-    row / form fields).
+  - `input_parameters`: submitter alias/email, request type, `category`,
+    start/end ISO 8601 datetimes, description, location, and an array of
+    additional attendee emails (mapped in Workflow Builder from the
+    triggering Slack List row / form fields).
+  - `category` is deliberately a separate input from `request_type`, not
+    reused — `request_type` only affects the human-readable title text,
+    while `category` must exactly match one of the categories IT
+    pre-configured on the shared mailbox (`OOTO`, `4x10 OOTO`, `WFH`,
+    `On-Site`, currently — see README's "Outlook categories" section for the
+    live list) and gets sent as Graph's `categories` field for calendar
+    color-coding. It's a plain string, not a code-enforced enum — the valid
+    set grows over time as IT adds per-site categories, and enum-locking it
+    here would mean a redeploy every time IT adds one.
   - `getGraphAccessToken()`: does the OAuth2 client-credentials POST to
     `https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token` to get an
     app-only bearer token — no user session involved, since the workflow runs
@@ -80,12 +89,23 @@ the workspace-selection prompt that triggers this.
   - Handler builds the title as `<alias> - <request type> - <date>`, builds
     the attendee list (submitter + additional attendees, all as Graph
     `attendees` so they get real Outlook invites), and POSTs to
-    `/v1.0/users/{MS_SHARED_MAILBOX}/events` with `showAs: "free"`.
+    `/v1.0/users/{MS_SHARED_MAILBOX}/events` with `showAs: "free"` and
+    `categories: [category]`.
   - Env vars (`env` destructured from the handler's context, not
     `Deno.env`): `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`,
     `MS_SHARED_MAILBOX`, `MS_EVENT_TIMEZONE`. All required-but-missing cases
     return `{ error: "..." }` rather than throwing — Workflow Builder surfaces
     that as a clean failed-step message.
+
+- **Do not request `Calendars.ReadWrite` as a tenant-wide app permission.**
+  IT deliberately did *not* grant that as an application permission with
+  admin consent — instead they scoped this app's mailbox access at the
+  Exchange level (an Application Access Policy restricting it to just
+  `teamavailability@emtech.us`). Per IT's explicit instruction, adding that
+  permission or requesting admin consent would override their scoping and
+  open access to every mailbox in the tenant. If a real API call ever fails
+  with a 401/403 permission error, that's a signal to go back to IT with the
+  exact error, not to go add Graph API permissions in Azure Portal.
 
 - **Known, deliberate limitation**: `showAs: "free"` only affects the shared
   mailbox's own calendar copy of the event. Each attendee gets an independent
@@ -105,17 +125,19 @@ the workspace-selection prompt that triggers this.
 
 ## Current blocking dependency
 
-The app cannot do anything end-to-end yet: `.env` has no real values because
-the Azure AD app registration (Tenant ID/Client ID/Client Secret) is pending
-IT approval. `.env.example` documents the expected variable names. Don't
-assume credentials exist — verify `.env` is present and populated before
-claiming an end-to-end test actually exercised the Graph API call.
+IT has responded with the finalized setup (mailbox, endpoint, permission
+scoping, categories — see README's "Getting credentials from IT" section),
+but the actual Tenant ID/Client ID/Client Secret values are not yet
+necessarily in `.env` — verify `.env` is present and actually populated
+before claiming an end-to-end test exercised the real Graph API call. Also
+note: give it a few minutes after `.env` is first populated before the very
+first real API call, since IT's permission scoping takes a short time to
+propagate.
 
 ## Operational considerations once deployed (see README for detail)
 
 `slack run` is local-dev-only (needs this machine/terminal running) — real
 usage requires `slack deploy` to Slack-hosted infra, plus `slack env add` for
-each production env var (separate from local `.env`). Also: Azure AD client
-secrets expire on IT's schedule — an autonomous deployment will fail silently
-post-expiration until `MS_CLIENT_SECRET` is rotated. Neither of these is set
-up yet as of this writing.
+each production env var (separate from local `.env`). Client secret expires
+2027-07-07 (IT has their own rotation reminder) — an autonomous deployment
+will fail silently post-expiration until `MS_CLIENT_SECRET` is rotated.

@@ -35,12 +35,14 @@ Workflow Builder workflow (built in Slack UI, not in this repo)
 - [x] `create_calendar_event` function written and registered as a Workflow
       Builder step
 - [x] Step added to the real workflow in Workflow Builder, inputs mapped
-- [ ] **Waiting on IT**: Azure AD app registration (Tenant ID, Client ID, Client
-      Secret) — see [Getting credentials from IT](#getting-credentials-from-it)
+- [x] IT set up the Azure AD app registration, scoped to the shared mailbox via
+      an Exchange Application Access Policy — see
+      [Getting credentials from IT](#getting-credentials-from-it) for the final
+      setup details
+- [ ] Actual Tenant ID / Client ID / Client Secret values added to `.env`
 - [ ] End-to-end test once credentials land
 
-Until credentials are supplied, running the step will fail fast with a clear
-error
+Until `.env` has real values, running the step will fail fast with a clear error
 (`Missing MS_TENANT_ID, MS_CLIENT_ID, or MS_CLIENT_SECRET environment
 variable`)
 rather than doing anything destructive — this is expected, not a bug.
@@ -78,13 +80,13 @@ sample trigger (see [Leftover scaffold files](#leftover-scaffold-files)).
 
 Copy `.env.example` to `.env` and fill in real values once IT provides them:
 
-| Variable            | Purpose                                                                                                   |
-| ------------------- | --------------------------------------------------------------------------------------------------------- |
-| `MS_TENANT_ID`      | Identifies Emtech's Azure AD directory                                                                    |
-| `MS_CLIENT_ID`      | Identifies this app's registration within that directory                                                  |
-| `MS_CLIENT_SECRET`  | The app's credential, used to authenticate as itself (no user login involved)                             |
-| `MS_SHARED_MAILBOX` | The shared scheduling mailbox address the event gets created on (e.g. `emtech-scheduling@yourdomain.com`) |
-| `MS_EVENT_TIMEZONE` | IANA timezone used for the event's start/end (e.g. `America/New_York`)                                    |
+| Variable            | Purpose                                                                           |
+| ------------------- | --------------------------------------------------------------------------------- |
+| `MS_TENANT_ID`      | Identifies Emtech's Azure AD directory                                            |
+| `MS_CLIENT_ID`      | Identifies this app's registration within that directory                          |
+| `MS_CLIENT_SECRET`  | The app's credential, used to authenticate as itself (no user login involved)     |
+| `MS_SHARED_MAILBOX` | The shared scheduling mailbox: `teamavailability@emtech.us` ("Team Availability") |
+| `MS_EVENT_TIMEZONE` | IANA timezone used for the event's start/end (e.g. `America/New_York`)            |
 
 `slack run` automatically picks up `.env` locally. For the deployed app, set
 these with `slack env add <NAME> <VALUE>` instead — `.env` is git-ignored and
@@ -92,36 +94,55 @@ never used once deployed.
 
 ### Getting credentials from IT
 
-See [`IT_REQUEST.md`](./IT_REQUEST.md) for a ready-to-forward version of this
-ask.
+[`IT_REQUEST.md`](./IT_REQUEST.md) is the original ask sent to IT — kept as a
+historical record. Here's what IT actually set up in response:
 
-This app authenticates to Microsoft Graph via the OAuth2 **client credentials**
-flow — it runs unattended (triggered by a Slack List update), so it has to
-authenticate as itself rather than as a signed-in person. That requires:
+- **Mailbox**: `teamavailability@emtech.us` ("Team Availability"). No Microsoft
+  365 license was needed for this — turned out to be unnecessary for a shared
+  mailbox used this way, despite what the original request assumed. Andrew
+  Crager and Simon Newkirk have full access (it auto-appears in their own
+  Outlook); everyone else in the company has read-only view access to events on
+  it.
+- **Endpoint**:
+  `POST https://graph.microsoft.com/v1.0/users/teamavailability@emtech.us/events`,
+  authenticated via the standard OAuth2 client-credentials flow — matches what
+  `getGraphAccessToken()` already does.
+- **Access scoping**: IT did **not** grant `Calendars.ReadWrite` as a
+  tenant-wide application permission with admin consent. Instead, they scoped
+  the app's access at the Exchange level (an Application Access Policy) so it
+  can only ever touch this one mailbox. **Do not add `Calendars.ReadWrite` as an
+  API permission or request admin consent on the app registration** — per IT,
+  that would override their scoping and open access to every mailbox in the
+  tenant. (This repo has no mechanism to do that anyway — Graph permissions are
+  configured entirely in Azure Portal, not in this codebase — but flagging
+  clearly so no one goes looking for a way to add it.)
+- **Propagation delay**: give it a few minutes after setup before the first real
+  API call — the permission scoping takes a short time to propagate on
+  Microsoft's side.
+- **Client secret expiration**: July 7, 2027. IT has their own reminder to
+  rotate it before then — flag them if it gets rotated sooner than that for any
+  reason, so their reminder stays accurate.
 
-1. An **Azure AD (Entra ID) app registration** for this app, which produces the
-   Tenant ID, Client ID, and Client Secret above.
-2. The `Calendars.ReadWrite` **application permission** on that registration,
-   with **admin consent** granted (application permissions always require a
-   tenant admin's sign-off, since no individual user consents on the app's
-   behalf).
-3. The shared mailbox (`emtech-scheduling@...` or equivalent) assigned a
-   Microsoft 365 license, needed for full calendar support via Graph.
+## Outlook categories
 
-Worth flagging to IT proactively: by default, `Calendars.ReadWrite` as an
-_application_ permission grants access to **every mailbox in the tenant**, not
-just the shared one. An Exchange Online **Application Access Policy** can scope
-this app down to only the shared scheduling mailbox — likely to speed up
-approval from a security-conscious admin.
+The event's `categories` field drives calendar color-coding, set from the step's
+`category` input (deliberately separate from `request_type`, which only affects
+the title text). The value must **exactly match** a category already configured
+on the shared mailbox by IT — it's a plain string, not validated against a fixed
+list in code, since the list grows over time (see below).
+
+Currently configured: `OOTO`, `4x10 OOTO`, `WFH`, `On-Site`.
+
+To add a per-site category (e.g. `On-Site - Seattle`), send IT the site name and
+they'll add a matching category + color on the mailbox. Update this list once
+they confirm the new category name, since Workflow Builder needs the exact
+spelling to map to it.
 
 ## Operational considerations for live/autonomous use
 
-- **Client secret expiration**: Azure AD client secrets expire on whatever
-  schedule IT sets (commonly 6–24 months). Once deployed and running unattended,
-  an expired secret means the app fails silently until someone rotates
-  `MS_CLIENT_SECRET` via `slack env add`. Worth asking IT for the expiration
-  date up front and calendaring a reminder, or asking whether a longer-lived
-  credential type is available.
+- **Client secret expiration**: see
+  [Getting credentials from IT](#getting-credentials-from-it) above for the
+  actual expiration date.
 - **Deployed env vars are separate from `.env`**: see
   [Environment variables](#environment-variables) above — `slack env add` has to
   be run once against the deployed app; local `.env` values don't carry over.
@@ -144,12 +165,12 @@ entry) — see `functions/create_calendar_event.ts` for where this is implemente
 deno test
 ```
 
-`functions/create_calendar_event_test.ts` covers the title formatting, the
-exact request sent to Microsoft Graph (subject, attendees, `showAs`), and the
-missing-env-var / token-failure error paths — all with `fetch` mocked via
-`@std/testing/mock`, so no live credential or network call is needed to run
-it. `functions/sample_function_test.ts` is unrelated, from the default
-scaffold (see below).
+`functions/create_calendar_event_test.ts` covers the title formatting, the exact
+request sent to Microsoft Graph (subject, attendees, `showAs`, `categories`),
+and the missing-env-var / token-failure error paths — all with `fetch` mocked
+via `@std/testing/mock`, so no live credential or network call is needed to run
+it. `functions/sample_function_test.ts` is unrelated, from the default scaffold
+(see below).
 
 ## Deploying
 

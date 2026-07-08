@@ -19,6 +19,7 @@ const BASE_INPUTS = {
   submitter_alias: "jdoe",
   submitter_email: "jdoe@example.com",
   request_type: "Time Off",
+  category: "OOTO",
   start_date_time: "2026-08-01T09:00:00",
   end_date_time: "2026-08-01T17:00:00",
   description: "Out of office",
@@ -75,6 +76,7 @@ Deno.test("create_calendar_event happy path sends the expected Graph request", a
     (capturedBody?.start as { dateTime: string; timeZone: string }).timeZone,
     "America/New_York",
   );
+  assertEquals(capturedBody?.categories, ["OOTO"]);
   assertEquals(outputs?.event_id, "AAMkAGI1AAA=");
   assertEquals(
     outputs?.web_link,

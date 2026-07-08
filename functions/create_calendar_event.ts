@@ -26,6 +26,11 @@ export const CreateCalendarEventDefinition = DefineFunction({
         type: Schema.types.string,
         description: "Type of request, used in the event title",
       },
+      category: {
+        type: Schema.types.string,
+        description:
+          "Outlook category for calendar color-coding. Must exactly match a category pre-configured on the shared mailbox by IT (currently: OOTO, 4x10 OOTO, WFH, On-Site, plus any per-site categories added later).",
+      },
       start_date_time: {
         type: Schema.types.string,
         description: "Event start, ISO 8601 (e.g. 2026-07-10T09:00:00)",
@@ -52,6 +57,7 @@ export const CreateCalendarEventDefinition = DefineFunction({
       "submitter_alias",
       "submitter_email",
       "request_type",
+      "category",
       "start_date_time",
       "end_date_time",
     ],
@@ -125,6 +131,7 @@ export default SlackFunction(
       submitter_alias,
       submitter_email,
       request_type,
+      category,
       start_date_time,
       end_date_time,
       description,
@@ -167,6 +174,7 @@ export default SlackFunction(
       // Keeps the shared mailbox's own calendar entry shown as free; does not
       // change how attendees' own calendars display the event once accepted.
       showAs: "free",
+      categories: [category],
     };
 
     const response = await fetch(
