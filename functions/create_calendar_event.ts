@@ -111,43 +111,49 @@ async function getGraphAccessToken(
   return access_token as string;
 }
 
-// Title format: "<submitter alias> - <request type> - <start date>"
-// timeZone must match the event's own timeZone (MS_EVENT_TIMEZONE) so the
-// title's date can never disagree with which day the event actually lands
-// on — without an explicit timeZone here, this would silently fall back to
-// whatever zone the process happens to be running in, which can differ from
-// MS_EVENT_TIMEZONE depending on where the app is running.
-export function formatTitleDate(isoDateTime: string, timeZone: string): string {
-  const date = new Date(isoDateTime);
-  return date.toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    timeZone,
-  });
-}
-
-// Calendar-date parts (year/month/day) as observed in the given IANA
-// timeZone — used instead of raw string-slicing since the offset in
-// isoDateTime (if any) can put it on a different calendar day than what's
-// intended once viewed in timeZone.
-function getCalendarDateParts(
-  isoDateTime: string,
-  timeZone: string,
-): { year: number; month: number; day: number } {
-  const date = new Date(isoDateTime);
-  // en-CA formats as YYYY-MM-DD, convenient to split.
-  const formatted = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
-  const [year, month, day] = formatted.split("-").map(Number);
-  return { year, month, day };
-}
-
 type DateParts = { year: number; month: number; day: number };
+
+const SHORT_MONTH_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+// Extracts the literal "YYYY-MM-DD" prefix of an ISO date/datetime string.
+//
+// start_date_time / end_date_time represent a calendar date someone picked
+// (via a date picker) — there's no real time-of-day or timezone meaning
+// intended, even though the raw value may carry a time/offset suffix (e.g.
+// "T00:00:00Z") as an artifact of the Slack List field's storage format.
+// A real bug already happened from getting this wrong: treating that
+// midnight-UTC suffix as a genuine moment in time and converting it to
+// America/Los_Angeles (hours behind UTC) rolled every date back by one full
+// day. The fix is to never timezone-convert these values at all — the
+// digits the user picked are the answer, regardless of what suffix is
+// attached.
+function getCalendarDateParts(isoDateTime: string): DateParts {
+  const match = isoDateTime.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) {
+    throw new Error(`Expected an ISO date string, got "${isoDateTime}"`);
+  }
+  const [, year, month, day] = match;
+  return { year: Number(year), month: Number(month), day: Number(day) };
+}
+
+// Title format: "<submitter alias> - <request type> - <start date>"
+export function formatTitleDate(isoDateTime: string): string {
+  const { year, month, day } = getCalendarDateParts(isoDateTime);
+  return `${SHORT_MONTH_NAMES[month - 1]} ${day}, ${year}`;
+}
 
 // Adds `days` calendar days to a Y/M/D triple. Uses UTC as a neutral, DST-free
 // computation frame — this is pure calendar arithmetic on already-extracted
@@ -168,21 +174,19 @@ function toMidnightIso({ year, month, day }: DateParts): string {
 }
 
 // Computes the start/end dateTime strings for an all-day Graph event. Graph
-// requires all-day start/end to both be midnight in the same timeZone, with
-// an *exclusive* end — i.e., the day after the last day of the event, not
-// the last day itself. endDateTime here is the workflow's "end date," which
-// is the inclusive last day someone is out, so this adds one calendar day.
+// requires all-day start/end to both be midnight (paired with a timeZone by
+// the caller), with an *exclusive* end — i.e., the day after the last day
+// of the event, not the last day itself. endDateTime here is the workflow's
+// "end date," which is the inclusive last day someone is out, so this adds
+// one calendar day. This is pure calendar-date arithmetic — no timezone
+// conversion — see getCalendarDateParts for why.
 // https://learn.microsoft.com/en-us/graph/api/resources/event#properties
 export function getAllDayEventRange(
   startDateTime: string,
   endDateTime: string,
-  timeZone: string,
 ): { start: string; end: string } {
-  const startParts = getCalendarDateParts(startDateTime, timeZone);
-  const endParts = addCalendarDays(
-    getCalendarDateParts(endDateTime, timeZone),
-    1,
-  );
+  const startParts = getCalendarDateParts(startDateTime);
+  const endParts = addCalendarDays(getCalendarDateParts(endDateTime), 1);
   return {
     start: toMidnightIso(startParts),
     end: toMidnightIso(endParts),
@@ -245,7 +249,7 @@ export default SlackFunction(
     }
 
     const title = `${submitter_alias} - ${request_type} - ${
-      formatTitleDate(start_date_time, timeZone)
+      formatTitleDate(start_date_time)
     }`;
 
     const attendees = [
@@ -256,11 +260,7 @@ export default SlackFunction(
       })),
     ];
 
-    const allDayRange = getAllDayEventRange(
-      start_date_time,
-      end_date_time,
-      timeZone,
-    );
+    const allDayRange = getAllDayEventRange(start_date_time, end_date_time);
 
     const eventBody = {
       subject: title,

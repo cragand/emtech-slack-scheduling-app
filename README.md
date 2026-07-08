@@ -167,15 +167,20 @@ worth knowing:
   sending it to Graph. If the workflow's date field ever changes to already
   provide an exclusive end date, this would double-count by a day — check
   `getAllDayEventRange()`'s tests if that's ever suspected.
-- **Time-of-day in the inputs is ignored.** Only the calendar date (as observed
-  in `MS_EVENT_TIMEZONE`) matters — `getAllDayEventRange()` deliberately
-  re-derives the date from the configured timezone rather than trusting the raw
-  string's own offset. This matters because a date/time string's offset and
-  `MS_EVENT_TIMEZONE` can disagree about which calendar day it falls on near
-  midnight; a real bug of exactly this kind (in the event's title, not its
-  placement) already happened once — see `formatTitleDate()` and
-  `getAllDayEventRange()` in `functions/create_calendar_event.ts` for how both
-  now consistently use `MS_EVENT_TIMEZONE` to decide "which day is this."
+- **Time-of-day and any offset/`Z` suffix in the inputs are ignored entirely.**
+  `start_date_time`/`end_date_time` represent a calendar date someone picked,
+  not a real moment in time — the literal `YYYY-MM-DD` written in the string is
+  taken as-is, with no timezone conversion applied. This is deliberate, and the
+  opposite of what an earlier version of this code did: it tried to convert
+  these values into `MS_EVENT_TIMEZONE` to decide "which day is this," which
+  seems reasonable but is actually wrong for a date-only value — Slack's date
+  field sends a plain date selection as midnight UTC (e.g.
+  `2026-07-08T00:00:00Z` for "July 8"), and converting midnight UTC into
+  `America/Los_Angeles` (hours behind UTC) rolls it back to the _previous_ day.
+  That bug was real and shipped briefly — a two-day request submitted as 7/8–7/9
+  came out as 7/7–7/8 on the actual calendar. `MS_EVENT_TIMEZONE` is still used,
+  just only to tell Graph what "midnight" means for the constructed date range,
+  never to determine which date it is in the first place.
 
 ## Operational considerations for live/autonomous use
 

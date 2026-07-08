@@ -22,82 +22,68 @@ const BASE_INPUTS = {
   submitter_alias: "jdoe",
   submitter_email: "jdoe@example.com",
   request_type: "Sick",
-  // Explicit UTC ("Z") times rather than naive local strings, so this test
-  // is deterministic regardless of the machine/CI running it — 16:00Z is
-  // 09:00 America/Los_Angeles (PDT, UTC-7 in August).
-  start_date_time: "2026-08-01T16:00:00Z",
-  end_date_time: "2026-08-01T20:00:00Z",
+  // Midnight UTC, matching what Slack's date field actually sends for a
+  // plain calendar-date selection (no real time-of-day intended).
+  start_date_time: "2026-08-01T00:00:00Z",
+  end_date_time: "2026-08-01T00:00:00Z",
   description: "Out of office",
   location: "N/A",
   additional_attendees: ["manager@example.com", "backup@example.com"],
 };
 
-Deno.test("formatTitleDate formats using the given timeZone, not the system default", () => {
-  assertEquals(
-    formatTitleDate("2026-08-01T16:00:00Z", "America/Los_Angeles"),
-    "Aug 1, 2026",
-  );
+Deno.test("formatTitleDate uses the literal date, ignoring any time/offset suffix", () => {
+  assertEquals(formatTitleDate("2026-08-01T00:00:00Z"), "Aug 1, 2026");
+  assertEquals(formatTitleDate("2026-08-01T23:59:00Z"), "Aug 1, 2026");
+  assertEquals(formatTitleDate("2026-08-01T09:00:00"), "Aug 1, 2026");
 });
 
-Deno.test("formatTitleDate can land on a different calendar day depending on timeZone", () => {
-  // 04:00 UTC is still July 9 in America/Los_Angeles (PDT, UTC-7) but
-  // already July 10 in UTC itself — this is the exact class of bug that
-  // caused the title's date to disagree with the actual event date when
-  // formatTitleDate didn't take an explicit timeZone.
-  assertEquals(
-    formatTitleDate("2026-07-10T04:00:00Z", "America/Los_Angeles"),
-    "Jul 9, 2026",
-  );
-  assertEquals(
-    formatTitleDate("2026-07-10T04:00:00Z", "UTC"),
-    "Jul 10, 2026",
-  );
+Deno.test("formatTitleDate does not roll a midnight-UTC date back a day (regression)", () => {
+  // This is the exact bug that was reported: a date-only value serialized
+  // as midnight UTC ("2026-07-08T00:00:00Z") was being timezone-converted
+  // to America/Los_Angeles, landing on July 7 evening instead of July 8.
+  assertEquals(formatTitleDate("2026-07-08T00:00:00Z"), "Jul 8, 2026");
 });
 
 Deno.test("getAllDayEventRange covers a single day with an exclusive end", () => {
-  // 07:00Z is midnight America/Los_Angeles (PDT, UTC-7) on July 9.
   const range = getAllDayEventRange(
-    "2026-07-09T07:00:00Z",
-    "2026-07-09T07:00:00Z",
-    "America/Los_Angeles",
+    "2026-07-09T00:00:00Z",
+    "2026-07-09T00:00:00Z",
   );
   assertEquals(range.start, "2026-07-09T00:00:00");
   assertEquals(range.end, "2026-07-10T00:00:00");
 });
 
-Deno.test("getAllDayEventRange spans multiple days correctly", () => {
+Deno.test("getAllDayEventRange spans multiple days correctly (regression)", () => {
+  // The reported bug, reproduced directly: submitting 7/8 to 7/9 must not
+  // land on 7/7 to 7/8.
   const range = getAllDayEventRange(
-    "2026-07-09T07:00:00Z",
-    "2026-07-11T07:00:00Z",
-    "America/Los_Angeles",
+    "2026-07-08T00:00:00Z",
+    "2026-07-09T00:00:00Z",
   );
-  assertEquals(range.start, "2026-07-09T00:00:00");
-  assertEquals(range.end, "2026-07-12T00:00:00");
+  assertEquals(range.start, "2026-07-08T00:00:00");
+  assertEquals(range.end, "2026-07-10T00:00:00");
 });
 
 Deno.test("getAllDayEventRange rolls over month and year boundaries", () => {
   const monthRollover = getAllDayEventRange(
-    "2026-07-31T07:00:00Z",
-    "2026-07-31T07:00:00Z",
-    "America/Los_Angeles",
+    "2026-07-31T00:00:00Z",
+    "2026-07-31T00:00:00Z",
   );
   assertEquals(monthRollover.end, "2026-08-01T00:00:00");
 
-  // December is PST (UTC-8), not PDT — midnight PST Dec 31 is 08:00Z.
   const yearRollover = getAllDayEventRange(
-    "2026-12-31T08:00:00Z",
-    "2026-12-31T08:00:00Z",
-    "America/Los_Angeles",
+    "2026-12-31T00:00:00Z",
+    "2026-12-31T00:00:00Z",
   );
   assertEquals(yearRollover.end, "2027-01-01T00:00:00");
 });
 
-Deno.test("getAllDayEventRange uses the calendar day observed in timeZone, not the raw UTC date", () => {
-  // 05:00 UTC on July 10 is still 22:00 on July 9 in America/Los_Angeles (PDT).
+Deno.test("getAllDayEventRange ignores time-of-day and offset entirely", () => {
+  // Late in the UTC day, with a full offset — both should still resolve to
+  // the literal July 9 date, not shift because of the "Z"/offset suffix.
   const range = getAllDayEventRange(
-    "2026-07-10T05:00:00Z",
-    "2026-07-10T05:00:00Z",
-    "America/Los_Angeles",
+    "2026-07-09T23:00:00Z",
+    "2026-07-09T05:00:00+05:00",
   );
   assertEquals(range.start, "2026-07-09T00:00:00");
   assertEquals(range.end, "2026-07-10T00:00:00");

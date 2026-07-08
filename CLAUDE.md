@@ -95,15 +95,31 @@ the workspace-selection prompt that triggers this.
     `attendees` so they get real Outlook invites), and POSTs to
     `/v1.0/users/{MS_SHARED_MAILBOX}/events` with `showAs: "free"` and
     `categories: [category]` (category derived as above).
-  - `formatTitleDate(isoDateTime, timeZone)` **requires** an explicit
-    `timeZone` argument — always pass the same `timeZone` variable used for
-    the Graph event itself (derived from `MS_EVENT_TIMEZONE`). A real bug
-    already happened here: without an explicit `timeZone`, JS's default date
-    formatting silently uses whatever zone the process happens to be running
-    in, which can differ from `MS_EVENT_TIMEZONE` — the event landed on the
-    correct day (Graph got the explicit zone), but the title's date text
-    showed the wrong day, near a midnight boundary. Don't remove that
-    parameter or call `formatTitleDate` without it.
+  - **`start_date_time`/`end_date_time` are calendar dates, not moments in
+    time — never timezone-convert them.** `getCalendarDateParts()` extracts
+    the literal `YYYY-MM-DD` prefix via regex and deliberately ignores
+    whatever time-of-day/offset suffix follows it (`formatTitleDate()` and
+    `getAllDayEventRange()` both build on this). Two real bugs happened here
+    before landing on this design, in this order — don't re-introduce either:
+    1. First attempt: `formatTitleDate` used `new Date(isoDateTime)` +
+       default (system-ambient) timezone formatting. The title showed the
+       wrong day near a midnight boundary.
+    2. "Fix": added an explicit `timeZone` parameter (`MS_EVENT_TIMEZONE`)
+       and ran the value through `Intl.DateTimeFormat` with that zone. This
+       made things *worse*, not better: Slack's date field sends a
+       date-only selection as midnight UTC (e.g. `2026-07-08T00:00:00Z` for
+       "July 8"), and converting midnight UTC to `America/Los_Angeles`
+       (hours behind UTC) rolls it back to the *previous* day's evening —
+       so both the title and the actual Graph event landed exactly one day
+       early, for every request, confirmed with a real two-day test
+       (submitted 7/8–7/9, got 7/7–7/8).
+    3. Actual fix: stop timezone-converting these values at all. The digits
+       in the string are the user's intent, full stop, regardless of what
+       suffix got attached to satisfy a datetime-shaped field. `timeZone`
+       (from `MS_EVENT_TIMEZONE`) is still correct and still needed — but
+       only paired with the constructed midnight strings when talking to
+       Graph (`start: { dateTime, timeZone }`), never used to decide *which
+       day* something is.
   - Env vars (`env` destructured from the handler's context, not
     `Deno.env`): `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`,
     `MS_SHARED_MAILBOX`, `MS_EVENT_TIMEZONE`. All required-but-missing cases
