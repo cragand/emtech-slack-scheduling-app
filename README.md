@@ -43,10 +43,11 @@ Workflow Builder workflow (built in Slack UI, not in this repo)
 - [x] End-to-end test against the real shared mailbox — title, category color,
       free/busy, all-day range, and multi-day date handling all confirmed
       correct
-- [ ] Test with additional attendees included (only tested with just the
-      submitter so far — see
-      [Known limitation](#known-limitation-attendees-freebusy-status) for what
-      to expect once that's tried)
+- [x] `additional_attendees` reworked to resolve Slack user references (a List
+      Person column) to real email addresses — see
+      [Additional attendees](#additional-attendees). Built and unit-tested; not
+      yet confirmed with a real live run
+- [ ] Real live test with additional attendees actually included
 - [ ] Deploy to Slack-hosted infra (`slack deploy`) for real/autonomous use —
       still only running via local `slack run` today
 
@@ -199,6 +200,37 @@ worth knowing:
   be run once against the deployed app; local `.env` values don't carry over.
 - `slack run` is local-dev-only and requires this machine/terminal to stay on;
   it is not how the app runs for real usage. See [Deploying](#deploying).
+
+## Additional attendees
+
+`additional_attendees` takes Slack user references (e.g. a List's "Person"
+column — currently "Internal OOTO Recipients" on the "Emtech Company Roster"
+list), not plain email addresses. Microsoft Graph has no concept of Slack users,
+so each one is resolved to a real email address via Slack's `users.info` API
+before being added to the event — this requires the
+`users:read`/`users:read.email` bot scopes.
+
+Resolution is **best-effort**: if a given attendee's email can't be found
+(hidden email, guest account, etc.), the event is still created with whichever
+attendees _did_ resolve, and the submitter gets a DM afterward naming who was
+skipped, rather than the whole request failing over one unresolvable person. The
+DM itself is also best-effort — if the submitter's own Slack account can't be
+resolved from `submitter_email` either, the notification is silently skipped
+rather than failing the (already successful) event creation.
+
+A plain-string (email) version of this field was tried first and does work when
+someone types a literal email address in — the failure is specifically with
+Person-type values, confirmed by that manual test succeeding while a
+Person-column-sourced value failed with a generic "invalid parameter" step
+failure (the same unhelpful message Slack gives for any pre-execution parameter
+type mismatch — nothing more specific is available for this failure class,
+checked via both `slack activity` and Workflow Builder's own activity log).
+Switching the List column itself to an Email type was also considered, since
+that would need zero code changes — set aside for now in favor of keeping Person
+type, since a future "External OOTO Recipients" field for non-Slack contacts
+will need its own plain-email input either way (external people have no Slack
+account to resolve from), and internal recipients specifically were asked to
+stay Person type.
 
 ## Known limitation: attendees' free/busy status
 

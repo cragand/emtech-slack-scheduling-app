@@ -28,8 +28,56 @@ const BASE_INPUTS = {
   end_date_time: "2026-08-01T00:00:00Z",
   description: "Out of office",
   location: "N/A",
-  additional_attendees: ["manager@example.com", "backup@example.com"],
+  // Slack user references (e.g. from a List's Person column) — resolved to
+  // real email addresses internally via client.users.info.
+  additional_attendees: ["U0MANAGER1", "U0BACKUP2"],
 };
+
+const RESOLVABLE_ATTENDEE_EMAILS: Record<string, string> = {
+  "U0MANAGER1": "manager@example.com",
+  "U0BACKUP2": "backup@example.com",
+};
+
+// Stubs the Slack Web API calls our attendee-resolution logic makes,
+// alongside whatever Microsoft Graph stub the test itself provides.
+// emailsByUserId maps user IDs to emails; omit an ID to simulate an
+// unresolvable attendee (no email in their profile).
+function stubSlackApi(
+  emailsByUserId: Record<string, string>,
+  options?: {
+    onLookupByEmail?: (email: string) => { id: string } | undefined;
+    onPostMessage?: (args: { channel: string; text: string }) => void;
+  },
+) {
+  return async (request: Request): Promise<Response | undefined> => {
+    if (request.url.includes("slack.com/api/users.info")) {
+      const params = await request.formData();
+      const userId = params.get("user") as string;
+      const email = emailsByUserId[userId];
+      return new Response(
+        JSON.stringify({ ok: true, user: { profile: { email } } }),
+        { status: 200 },
+      );
+    }
+    if (request.url.includes("slack.com/api/users.lookupByEmail")) {
+      const params = await request.formData();
+      const email = params.get("email") as string;
+      const user = options?.onLookupByEmail?.(email);
+      return new Response(JSON.stringify({ ok: Boolean(user), user }), {
+        status: 200,
+      });
+    }
+    if (request.url.includes("slack.com/api/chat.postMessage")) {
+      const params = await request.formData();
+      options?.onPostMessage?.({
+        channel: params.get("channel") as string,
+        text: params.get("text") as string,
+      });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
+    return undefined;
+  };
+}
 
 Deno.test("formatTitleDate uses the literal date, ignoring any time/offset suffix", () => {
   assertEquals(formatTitleDate("2026-08-01T00:00:00Z"), "Aug 1, 2026");
@@ -102,6 +150,7 @@ Deno.test("getCategoryForRequestType maps every known Request Type value", () =>
 
 Deno.test("create_calendar_event happy path sends the expected Graph request", async () => {
   let capturedBody: Record<string, unknown> | undefined;
+  const slackApiStub = stubSlackApi(RESOLVABLE_ATTENDEE_EMAILS);
 
   using _stubFetch = stub(
     globalThis,
@@ -115,6 +164,9 @@ Deno.test("create_calendar_event happy path sends the expected Graph request", a
           { status: 200 },
         );
       }
+
+      const slackResponse = await slackApiStub(request);
+      if (slackResponse) return slackResponse;
 
       // graph.microsoft.com/v1.0/users/{mailbox}/events
       capturedBody = await request.json();
@@ -156,6 +208,60 @@ Deno.test("create_calendar_event happy path sends the expected Graph request", a
     outputs?.web_link,
     "https://outlook.office.com/calendar/item/AAMkAGI1AAA%3D",
   );
+});
+
+Deno.test("create_calendar_event still creates the event when an attendee can't be resolved, and DMs the submitter", async () => {
+  let capturedBody: Record<string, unknown> | undefined;
+  let postedMessage: { channel: string; text: string } | undefined;
+
+  // U0BACKUP2 has no email in this stub, simulating an unresolvable attendee.
+  const slackApiStub = stubSlackApi({ "U0MANAGER1": "manager@example.com" }, {
+    onLookupByEmail: (email) =>
+      email === "jdoe@example.com" ? { id: "U0SUBMITTER" } : undefined,
+    onPostMessage: (args) => {
+      postedMessage = args;
+    },
+  });
+
+  using _stubFetch = stub(
+    globalThis,
+    "fetch",
+    async (url: string | URL | Request, options?: RequestInit) => {
+      const request = url instanceof Request ? url : new Request(url, options);
+
+      if (request.url.includes("login.microsoftonline.com")) {
+        return new Response(
+          JSON.stringify({ access_token: "fake-access-token" }),
+          { status: 200 },
+        );
+      }
+
+      const slackResponse = await slackApiStub(request);
+      if (slackResponse) return slackResponse;
+
+      capturedBody = await request.json();
+      return new Response(
+        JSON.stringify({ id: "AAMkAGI1AAA=", webLink: "https://x" }),
+        { status: 201 },
+      );
+    },
+  );
+
+  const { outputs, error } = await CreateCalendarEvent(
+    createContext({ inputs: BASE_INPUTS, env: FAKE_ENV }),
+  );
+
+  assertEquals(error, undefined);
+  assertExists(outputs);
+  // Only the resolvable attendee made it onto the event.
+  assertEquals(capturedBody?.attendees, [
+    { emailAddress: { address: "jdoe@example.com" }, type: "required" },
+    { emailAddress: { address: "manager@example.com" }, type: "required" },
+  ]);
+  // The submitter was notified about the one that couldn't be added.
+  assertExists(postedMessage);
+  assertEquals(postedMessage?.channel, "U0SUBMITTER");
+  assertStringIncludes(postedMessage?.text ?? "", "<@U0BACKUP2>");
 });
 
 Deno.test("create_calendar_event fails fast when MS_SHARED_MAILBOX is missing", async () => {

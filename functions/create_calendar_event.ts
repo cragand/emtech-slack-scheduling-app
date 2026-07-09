@@ -47,8 +47,9 @@ export const CreateCalendarEventDefinition = DefineFunction({
       },
       additional_attendees: {
         type: Schema.types.array,
-        items: { type: Schema.types.string },
-        description: "Additional attendee emails, pulled from the Slack List",
+        items: { type: Schema.slack.types.user_id },
+        description:
+          "Additional attendees as Slack user references (e.g. from a List's Person column). Resolved to real email addresses internally via the Slack API.",
       },
     },
     required: [
@@ -214,7 +215,7 @@ export function getCategoryForRequestType(
 
 export default SlackFunction(
   CreateCalendarEventDefinition,
-  async ({ inputs, env }) => {
+  async ({ inputs, env, client }) => {
     const {
       submitter_alias,
       submitter_email,
@@ -252,9 +253,28 @@ export default SlackFunction(
       formatTitleDate(start_date_time)
     }`;
 
+    // additional_attendees are Slack user references (e.g. a List's Person
+    // column) — Microsoft Graph has no concept of Slack users, so each one
+    // needs to be resolved to a real email address first. Resolution is
+    // best-effort: an attendee who can't be resolved (hidden email, guest
+    // account, etc.) is skipped rather than failing the whole request, and
+    // the submitter gets a DM afterward listing who was skipped so they can
+    // follow up.
+    const resolvedAttendeeEmails: string[] = [];
+    const unresolvedAttendeeIds: string[] = [];
+    for (const userId of additional_attendees ?? []) {
+      const userInfo = await client.users.info({ user: userId });
+      const email = userInfo.ok ? userInfo.user?.profile?.email : undefined;
+      if (email) {
+        resolvedAttendeeEmails.push(email);
+      } else {
+        unresolvedAttendeeIds.push(userId);
+      }
+    }
+
     const attendees = [
       { emailAddress: { address: submitter_email }, type: "required" },
-      ...(additional_attendees ?? []).map((email) => ({
+      ...resolvedAttendeeEmails.map((email) => ({
         emailAddress: { address: email },
         type: "required",
       })),
@@ -299,6 +319,28 @@ export default SlackFunction(
     }
 
     const event = await response.json();
+
+    if (unresolvedAttendeeIds.length > 0) {
+      // Best-effort: the event was already created successfully above, so a
+      // failure here should never turn this into a failed step.
+      try {
+        const submitter = await client.users.lookupByEmail({
+          email: submitter_email,
+        });
+        if (submitter.ok && submitter.user?.id) {
+          const mentions = unresolvedAttendeeIds
+            .map((id) => `<@${id}>`)
+            .join(", ");
+          await client.chat.postMessage({
+            channel: submitter.user.id,
+            text:
+              `Your "${title}" calendar event was created, but ${mentions} couldn't be added as an attendee — their email address wasn't available. They may need to check their Slack profile's contact info.`,
+          });
+        }
+      } catch {
+        // Notification is a courtesy, not a requirement — swallow any error.
+      }
+    }
 
     return {
       outputs: {
