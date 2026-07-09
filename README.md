@@ -52,9 +52,12 @@ Workflow Builder workflow (built in Slack UI, not in this repo)
       Email-type column was tried first and turned out to not support saving
       more than one value) — see [External attendees](#external-attendees).
       First live test surfaced a real bug (Slack's rich-text auto-linkifying
-      added a `mailto:` prefix that silently broke delivery) — fixed by
-      stripping it in `parseEmailList()`. Not yet re-confirmed live since the
-      fix
+      added a `mailto:` prefix that silently broke delivery); fixed and
+      confirmed working live afterward
+- [x] Fixed a case-sensitivity bug in the request-type-to-category lookup (the
+      dropdown's actual `4X10 OOTO` value didn't match the table's `4x10 OOTO`
+      key) — matching is now case-insensitive, see
+      [Outlook categories](#outlook-categories)
 - [ ] Deploy to Slack-hosted infra (`slack deploy`) for real/autonomous use —
       still only running via local `slack run` today
 
@@ -167,6 +170,12 @@ category mapping configured for request type "..."`
 rather than silently mis-categorizing (or, worse, silently succeeding with the
 wrong color). To add a new per-site category (e.g. `On-Site - Seattle`) to the
 mailbox itself, send IT the site name and they'll configure it with a color.
+
+The lookup is case-insensitive (and trims surrounding whitespace) — a real
+request failed because the dropdown's actual value (`4X10 OOTO`) didn't match
+this table's key (`4x10 OOTO`) under an exact-case comparison. The table's keys
+can stay whatever casing is convenient to read; matching doesn't depend on it
+lining up exactly with the dropdown.
 
 ## All-day events
 

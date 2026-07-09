@@ -187,6 +187,16 @@ Deno.test("getCategoryForRequestType maps every known Request Type value", () =>
   assertEquals(getCategoryForRequestType("Something Unrecognized"), undefined);
 });
 
+Deno.test("getCategoryForRequestType matches regardless of case or surrounding whitespace (regression)", () => {
+  // Real bug: the dropdown's actual value ("4X10 OOTO") didn't match this
+  // table's key ("4x10 OOTO") under an exact-case lookup, so a legitimate
+  // request failed with "No Outlook category mapping configured...".
+  assertEquals(getCategoryForRequestType("4X10 OOTO"), "4x10 OOTO");
+  assertEquals(getCategoryForRequestType("4x10 ooto"), "4x10 OOTO");
+  assertEquals(getCategoryForRequestType("sick"), "OOTO");
+  assertEquals(getCategoryForRequestType("  WFH  "), "WFH");
+});
+
 Deno.test("create_calendar_event happy path sends the expected Graph request", async () => {
   let capturedBody: Record<string, unknown> | undefined;
   const slackApiStub = stubSlackApi(RESOLVABLE_ATTENDEE_EMAILS);

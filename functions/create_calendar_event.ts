@@ -212,10 +212,20 @@ const REQUEST_TYPE_TO_CATEGORY: Record<string, string> = {
   "Location Assignment": "On-Site",
 };
 
+// Matches case-insensitively (and trims whitespace) against the dropdown's
+// options — a real bug happened from an exact-case lookup: the dropdown's
+// actual value ("4X10 OOTO") didn't match this table's key ("4x10 OOTO"),
+// so a legitimate request type was rejected as unrecognized.
 export function getCategoryForRequestType(
   requestType: string,
 ): string | undefined {
-  return REQUEST_TYPE_TO_CATEGORY[requestType];
+  const normalized = requestType.trim().toLowerCase();
+  for (const [key, category] of Object.entries(REQUEST_TYPE_TO_CATEGORY)) {
+    if (key.toLowerCase() === normalized) {
+      return category;
+    }
+  }
+  return undefined;
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

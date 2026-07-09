@@ -128,6 +128,10 @@ the workspace-selection prompt that triggers this.
     matching entry (see README's "Outlook categories" section) — an unknown
     `request_type` returns a clean `{ error: "No Outlook category mapping
     configured..." }` rather than guessing or silently omitting the category.
+    **The lookup is case-insensitive (and trims whitespace) — don't switch
+    it back to an exact-case object-key lookup.** A real request failed
+    because the dropdown's actual value (`4X10 OOTO`) didn't match this
+    table's key (`4x10 OOTO`) under exact-case comparison.
   - `getGraphAccessToken()`: does the OAuth2 client-credentials POST to
     `https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token` to get an
     app-only bearer token — no user session involved, since the workflow runs
