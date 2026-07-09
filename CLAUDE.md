@@ -70,24 +70,33 @@ the workspace-selection prompt that triggers this.
 
 - **`functions/create_calendar_event.ts`** — the one file that matters.
   - `input_parameters`: submitter alias/email, request type, start/end ISO
-    8601 datetimes, description, location, and `additional_attendees`
-    (mapped in Workflow Builder from the triggering Slack List row / form
-    fields).
+    8601 datetimes, description, location, `additional_attendees`, and
+    `external_attendees` (mapped in Workflow Builder from the triggering
+    Slack List row / form fields).
   - **`additional_attendees` is `Schema.slack.types.user_id[]`, not plain
     email strings — this was deliberate, confirmed by testing, don't revert
     it.** A plain-string version was tried first (and does work when a
     literal email is typed in), but the real data source is a List's Person
-    column, which gives a Slack user ID, not an email — Microsoft Graph has
-    no concept of Slack users, so each ID is resolved via `client.users.info`
-    before being added as a Graph attendee. This needs the
-    `users:read`/`users:read.email` bot scopes (in `manifest.ts`). Resolution
-    is best-effort — an attendee whose email can't be found is skipped
-    (event still created with whoever did resolve) rather than failing the
-    whole step, and the submitter gets a best-effort DM afterward (via
-    `users.lookupByEmail` on `submitter_email`, then `chat.postMessage`)
-    naming who was skipped. See README's "Additional attendees" section for
-    the full reasoning, including why an Email-type List column (which would
-    avoid all of this) was considered and set aside for now.
+    column ("Internal OOTO Recipients"), which gives a Slack user ID, not an
+    email — Microsoft Graph has no concept of Slack users, so each ID is
+    resolved via `client.users.info` before being added as a Graph attendee.
+    This needs the `users:read`/`users:read.email` bot scopes (in
+    `manifest.ts`). Resolution is best-effort — an attendee whose email can't
+    be found is skipped (event still created with whoever did resolve)
+    rather than failing the whole step, and the submitter gets a best-effort
+    DM afterward (via `users.lookupByEmail` on `submitter_email`, then
+    `chat.postMessage`) naming who was skipped. Confirmed working end-to-end
+    with a real live run.
+  - **`external_attendees` is `Schema.types.array` of plain
+    `Schema.types.string`** (unlike `additional_attendees`) — it maps to
+    "External OOTO Recipients," an Email-type List column, for non-org
+    contacts who have no Slack account to resolve from. Slack's List Email
+    field type is natively multi-value (confirmed via Slack's own API
+    reference), so this maps directly with zero parsing/lookup logic — just
+    combined as-is with the resolved internal emails into one Graph
+    `attendees` list. Not yet confirmed with a real live run (built +
+    unit-tested only, as of this writing). See README's "Additional
+    attendees" / "External attendees" sections for the full reasoning.
   - There is **no separate `category` input** — a first attempt added one,
     but it caused a real "failed to start due to an invalid parameter"
     failure in production because the Workflow Builder step wasn't

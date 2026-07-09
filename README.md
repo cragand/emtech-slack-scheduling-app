@@ -45,9 +45,12 @@ Workflow Builder workflow (built in Slack UI, not in this repo)
       correct
 - [x] `additional_attendees` reworked to resolve Slack user references (a List
       Person column) to real email addresses — see
-      [Additional attendees](#additional-attendees). Built and unit-tested; not
-      yet confirmed with a real live run
-- [ ] Real live test with additional attendees actually included
+      [Additional attendees](#additional-attendees). Confirmed working with a
+      real live run (Internal OOTO Recipients)
+- [x] `external_attendees` added for non-Slack contacts (a plain-email List
+      column, "External OOTO Recipients") — see
+      [External attendees](#external-attendees). Built and unit-tested; not yet
+      confirmed with a real live run
 - [ ] Deploy to Slack-hosted infra (`slack deploy`) for real/autonomous use —
       still only running via local `slack run` today
 
@@ -226,11 +229,21 @@ failure (the same unhelpful message Slack gives for any pre-execution parameter
 type mismatch — nothing more specific is available for this failure class,
 checked via both `slack activity` and Workflow Builder's own activity log).
 Switching the List column itself to an Email type was also considered, since
-that would need zero code changes — set aside for now in favor of keeping Person
-type, since a future "External OOTO Recipients" field for non-Slack contacts
-will need its own plain-email input either way (external people have no Slack
-account to resolve from), and internal recipients specifically were asked to
-stay Person type.
+that would need zero code changes — set aside for `additional_attendees`
+specifically since internal recipients were asked to stay Person type, but it's
+exactly the approach used for external ones below.
+
+### External attendees
+
+`external_attendees` is a separate input — a plain array of email address
+strings, mapped to the "External OOTO Recipients" Email-type column on the same
+list. External contacts (non-org POCs, clients) have no Slack account to
+resolve, so there's no lookup step: Slack's List "Email" field type is natively
+multi-value (confirmed via Slack's own API reference — it stores
+`["a@b.com", "c@d.com"]`, an array, same shape as this input), so it maps
+directly with no code-side parsing needed. These get combined with the resolved
+internal attendees into one Graph `attendees` list — external contacts receive
+the same real Outlook invite as everyone else.
 
 ## Known limitation: attendees' free/busy status
 
@@ -250,11 +263,13 @@ deno test
 
 `functions/create_calendar_event_test.ts` covers the title formatting, the
 request-type-to-category mapping, the exact request sent to Microsoft Graph
-(subject, attendees, `showAs`, `categories`), and the missing-env-var /
-unrecognized-request-type / token-failure error paths — all with `fetch` mocked
-via `@std/testing/mock`, so no live credential or network call is needed to run
-it. `functions/sample_function_test.ts` is unrelated, from the default scaffold
-(see below).
+(subject, attendees, `showAs`, `categories`), attendee resolution (internal +
+external combined, and the best-effort skip-and-notify behavior when an internal
+attendee can't be resolved), and the missing-env-var / unrecognized-request-type
+/ token-failure error paths — all with `fetch` mocked via `@std/testing/mock`
+(including Slack's own Web API calls), so no live credential or network call is
+needed to run it. `functions/sample_function_test.ts` is unrelated, from the
+default scaffold (see below).
 
 ## Deploying
 

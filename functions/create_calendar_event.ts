@@ -49,7 +49,13 @@ export const CreateCalendarEventDefinition = DefineFunction({
         type: Schema.types.array,
         items: { type: Schema.slack.types.user_id },
         description:
-          "Additional attendees as Slack user references (e.g. from a List's Person column). Resolved to real email addresses internally via the Slack API.",
+          "Additional internal attendees as Slack user references (e.g. from a List's Person column). Resolved to real email addresses internally via the Slack API.",
+      },
+      external_attendees: {
+        type: Schema.types.array,
+        items: { type: Schema.types.string },
+        description:
+          "Additional external attendees as plain email addresses (e.g. non-org POCs/clients with no Slack account). Used as-is, no resolution needed.",
       },
     },
     required: [
@@ -225,6 +231,7 @@ export default SlackFunction(
       description,
       location,
       additional_attendees,
+      external_attendees,
     } = inputs;
 
     const mailbox = env["MS_SHARED_MAILBOX"];
@@ -274,10 +281,15 @@ export default SlackFunction(
 
     const attendees = [
       { emailAddress: { address: submitter_email }, type: "required" },
-      ...resolvedAttendeeEmails.map((email) => ({
-        emailAddress: { address: email },
-        type: "required",
-      })),
+      // External attendees are already plain email addresses — no Slack
+      // account to resolve, so they're used as-is alongside the resolved
+      // internal ones.
+      ...[...resolvedAttendeeEmails, ...(external_attendees ?? [])].map(
+        (email) => ({
+          emailAddress: { address: email },
+          type: "required",
+        }),
+      ),
     ];
 
     const allDayRange = getAllDayEventRange(start_date_time, end_date_time);

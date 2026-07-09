@@ -210,6 +210,56 @@ Deno.test("create_calendar_event happy path sends the expected Graph request", a
   );
 });
 
+Deno.test("create_calendar_event combines resolved internal attendees with plain external emails", async () => {
+  let capturedBody: Record<string, unknown> | undefined;
+  const slackApiStub = stubSlackApi(RESOLVABLE_ATTENDEE_EMAILS);
+
+  using _stubFetch = stub(
+    globalThis,
+    "fetch",
+    async (url: string | URL | Request, options?: RequestInit) => {
+      const request = url instanceof Request ? url : new Request(url, options);
+
+      if (request.url.includes("login.microsoftonline.com")) {
+        return new Response(
+          JSON.stringify({ access_token: "fake-access-token" }),
+          { status: 200 },
+        );
+      }
+
+      const slackResponse = await slackApiStub(request);
+      if (slackResponse) return slackResponse;
+
+      capturedBody = await request.json();
+      return new Response(
+        JSON.stringify({ id: "AAMkAGI1AAA=", webLink: "https://x" }),
+        { status: 201 },
+      );
+    },
+  );
+
+  const { error } = await CreateCalendarEvent(
+    createContext({
+      inputs: {
+        ...BASE_INPUTS,
+        external_attendees: ["client@external.example.com"],
+      },
+      env: FAKE_ENV,
+    }),
+  );
+
+  assertEquals(error, undefined);
+  assertEquals(capturedBody?.attendees, [
+    { emailAddress: { address: "jdoe@example.com" }, type: "required" },
+    { emailAddress: { address: "manager@example.com" }, type: "required" },
+    { emailAddress: { address: "backup@example.com" }, type: "required" },
+    {
+      emailAddress: { address: "client@external.example.com" },
+      type: "required",
+    },
+  ]);
+});
+
 Deno.test("create_calendar_event still creates the event when an attendee can't be resolved, and DMs the submitter", async () => {
   let capturedBody: Record<string, unknown> | undefined;
   let postedMessage: { channel: string; text: string } | undefined;
