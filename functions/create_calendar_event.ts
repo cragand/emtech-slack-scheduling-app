@@ -52,10 +52,9 @@ export const CreateCalendarEventDefinition = DefineFunction({
           "Additional internal attendees as Slack user references (e.g. from a List's Person column). Resolved to real email addresses internally via the Slack API.",
       },
       external_attendees: {
-        type: Schema.types.array,
-        items: { type: Schema.types.string },
+        type: Schema.types.string,
         description:
-          "Additional external attendees as plain email addresses (e.g. non-org POCs/clients with no Slack account). Used as-is, no resolution needed.",
+          "Additional external attendees (e.g. non-org POCs/clients with no Slack account) as a single string of email addresses separated by whitespace, commas, or semicolons — e.g. from a List's plain Text column.",
       },
     },
     required: [
@@ -219,6 +218,33 @@ export function getCategoryForRequestType(
   return REQUEST_TYPE_TO_CATEGORY[requestType];
 }
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Splits external_attendees (a single string) into individual email
+// addresses. Slack's List "Email" column type is documented as multi-value,
+// but saving more than one value to it fails in practice ("Failed to save
+// changes!") — this works around that by using a plain Text column instead,
+// with addresses separated by whitespace, commas, or semicolons (any mix),
+// matching however someone naturally types a list of emails. Returns an
+// error naming the first entry that doesn't look like a valid email, rather
+// than silently sending something malformed to Graph.
+export function parseEmailList(
+  value: string | undefined,
+): { emails: string[] } | { error: string } {
+  const entries = (value ?? "")
+    .split(/[\s,;]+/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  for (const entry of entries) {
+    if (!EMAIL_PATTERN.test(entry)) {
+      return { error: `"${entry}" doesn't look like a valid email address` };
+    }
+  }
+
+  return { emails: entries };
+}
+
 export default SlackFunction(
   CreateCalendarEventDefinition,
   async ({ inputs, env, client }) => {
@@ -244,6 +270,13 @@ export default SlackFunction(
       return {
         error:
           `No Outlook category mapping configured for request type "${request_type}"`,
+      };
+    }
+
+    const externalAttendeesResult = parseEmailList(external_attendees);
+    if ("error" in externalAttendeesResult) {
+      return {
+        error: `Invalid external_attendees: ${externalAttendeesResult.error}`,
       };
     }
 
@@ -284,7 +317,7 @@ export default SlackFunction(
       // External attendees are already plain email addresses — no Slack
       // account to resolve, so they're used as-is alongside the resolved
       // internal ones.
-      ...[...resolvedAttendeeEmails, ...(external_attendees ?? [])].map(
+      ...[...resolvedAttendeeEmails, ...externalAttendeesResult.emails].map(
         (email) => ({
           emailAddress: { address: email },
           type: "required",

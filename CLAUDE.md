@@ -87,16 +87,24 @@ the workspace-selection prompt that triggers this.
     DM afterward (via `users.lookupByEmail` on `submitter_email`, then
     `chat.postMessage`) naming who was skipped. Confirmed working end-to-end
     with a real live run.
-  - **`external_attendees` is `Schema.types.array` of plain
-    `Schema.types.string`** (unlike `additional_attendees`) — it maps to
-    "External OOTO Recipients," an Email-type List column, for non-org
-    contacts who have no Slack account to resolve from. Slack's List Email
-    field type is natively multi-value (confirmed via Slack's own API
-    reference), so this maps directly with zero parsing/lookup logic — just
-    combined as-is with the resolved internal emails into one Graph
-    `attendees` list. Not yet confirmed with a real live run (built +
-    unit-tested only, as of this writing). See README's "Additional
-    attendees" / "External attendees" sections for the full reasoning.
+  - **`external_attendees` is a single `Schema.types.string`, not an
+    array** — for non-org contacts with no Slack account to resolve from. It
+    maps to "External OOTO Recipients," a plain **Text** List column, parsed
+    by `parseEmailList()` (splits on any mix of whitespace/commas/semicolons,
+    validates each entry looks like an email, returns `{ error }` naming the
+    first bad one otherwise). This is NOT the original design — an array of
+    strings mapped to an Email-type List column was tried first (matching
+    Slack's own API reference, which documents that field type as natively
+    multi-value: `["a@b.com", "c@d.com"]`), but saving more than one value to
+    an Email-type field fails in the actual product with a generic "Failed to
+    save changes!" error, reproduced repeatedly — a real gap between the
+    documented data model and what the UI/backend actually supports as of
+    this writing. Don't revert to the array/Email-column version without
+    first confirming Slack has fixed that. Combined with the resolved
+    internal emails into one Graph `attendees` list. Not yet confirmed with a
+    real live run (built + unit-tested only, as of this writing). See
+    README's "Additional attendees" / "External attendees" sections for the
+    full reasoning.
   - There is **no separate `category` input** — a first attempt added one,
     but it caused a real "failed to start due to an invalid parameter"
     failure in production because the Workflow Builder step wasn't

@@ -5,6 +5,7 @@ import CreateCalendarEvent, {
   formatTitleDate,
   getAllDayEventRange,
   getCategoryForRequestType,
+  parseEmailList,
 } from "./create_calendar_event.ts";
 
 const { createContext } = SlackFunctionTester("create_calendar_event");
@@ -137,6 +138,33 @@ Deno.test("getAllDayEventRange ignores time-of-day and offset entirely", () => {
   assertEquals(range.end, "2026-07-10T00:00:00");
 });
 
+Deno.test("parseEmailList splits on whitespace, commas, and semicolons", () => {
+  assertEquals(
+    parseEmailList("a@x.com b@y.com"),
+    { emails: ["a@x.com", "b@y.com"] },
+  );
+  assertEquals(
+    parseEmailList("a@x.com, b@y.com;c@z.com"),
+    { emails: ["a@x.com", "b@y.com", "c@z.com"] },
+  );
+  assertEquals(
+    parseEmailList("  a@x.com   b@y.com  "),
+    { emails: ["a@x.com", "b@y.com"] },
+  );
+});
+
+Deno.test("parseEmailList handles empty/undefined input", () => {
+  assertEquals(parseEmailList(undefined), { emails: [] });
+  assertEquals(parseEmailList(""), { emails: [] });
+  assertEquals(parseEmailList("   "), { emails: [] });
+});
+
+Deno.test("parseEmailList returns an error naming the first invalid entry", () => {
+  const result = parseEmailList("a@x.com not-an-email b@y.com");
+  assertEquals("error" in result, true);
+  assertStringIncludes((result as { error: string }).error, "not-an-email");
+});
+
 Deno.test("getCategoryForRequestType maps every known Request Type value", () => {
   assertEquals(getCategoryForRequestType("Sick"), "OOTO");
   assertEquals(getCategoryForRequestType("Vacation"), "OOTO");
@@ -242,7 +270,9 @@ Deno.test("create_calendar_event combines resolved internal attendees with plain
     createContext({
       inputs: {
         ...BASE_INPUTS,
-        external_attendees: ["client@external.example.com"],
+        // Mixed delimiters, matching however someone naturally types a list.
+        external_attendees:
+          "client@external.example.com; second@external.example.com",
       },
       env: FAKE_ENV,
     }),
@@ -257,7 +287,34 @@ Deno.test("create_calendar_event combines resolved internal attendees with plain
       emailAddress: { address: "client@external.example.com" },
       type: "required",
     },
+    {
+      emailAddress: { address: "second@external.example.com" },
+      type: "required",
+    },
   ]);
+});
+
+Deno.test("create_calendar_event fails fast on an invalid external_attendees entry", async () => {
+  using _stubFetch = stub(
+    globalThis,
+    "fetch",
+    () => {
+      throw new Error(
+        "fetch should never be called for an invalid external_attendees entry",
+      );
+    },
+  );
+
+  const { outputs, error } = await CreateCalendarEvent(
+    createContext({
+      inputs: { ...BASE_INPUTS, external_attendees: "not-an-email" },
+      env: FAKE_ENV,
+    }),
+  );
+
+  assertExists(error);
+  assertStringIncludes(error, "not-an-email");
+  assertEquals(outputs, undefined);
 });
 
 Deno.test("create_calendar_event still creates the event when an attendee can't be resolved, and DMs the submitter", async () => {
