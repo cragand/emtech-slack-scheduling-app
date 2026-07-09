@@ -20,7 +20,8 @@ const FAKE_ENV = {
 };
 
 const BASE_INPUTS = {
-  submitter_alias: "jdoe",
+  amazon_alias: "jdoe",
+  submitter_name: "John Doe",
   submitter_email: "jdoe@example.com",
   request_type: "Sick",
   // Midnight UTC, matching what Slack's date field actually sends for a
@@ -235,7 +236,7 @@ Deno.test("create_calendar_event happy path sends the expected Graph request", a
 
   assertEquals(error, undefined);
   assertExists(capturedBody);
-  assertEquals(capturedBody?.subject, "jdoe - Sick - Aug 1, 2026");
+  assertEquals(capturedBody?.subject, "jdoe - Sick - Aug 1, 2026 - John Doe");
   assertEquals(capturedBody?.showAs, "free");
   assertEquals(capturedBody?.attendees, [
     { emailAddress: { address: "jdoe@example.com" }, type: "required" },

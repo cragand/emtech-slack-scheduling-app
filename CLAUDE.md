@@ -69,10 +69,16 @@ the workspace-selection prompt that triggers this.
   `graph.microsoft.com` — the Deno SDK sandboxes `fetch` to declared domains.
 
 - **`functions/create_calendar_event.ts`** — the one file that matters.
-  - `input_parameters`: submitter alias/email, request type, start/end ISO
-    8601 datetimes, description, location, `additional_attendees`, and
-    `external_attendees` (mapped in Workflow Builder from the triggering
-    Slack List row / form fields).
+  - `input_parameters`: `amazon_alias`, `submitter_name`, submitter email,
+    request type, start/end ISO 8601 datetimes, description, location,
+    `additional_attendees`, and `external_attendees` (mapped in Workflow
+    Builder from the triggering Slack List row / form fields).
+    `amazon_alias` is sourced from the company roster lookup (Workflow
+    Builder step 3), not the initial form — distinct from `submitter_name`,
+    which is the person's actual name. This used to be a single field
+    (`submitter_alias`) doing double duty as both the title's first and only
+    identifying segment; it was split into two once a real Amazon Alias
+    became available as separate data.
   - **`additional_attendees` is `Schema.slack.types.user_id[]`, not plain
     email strings — this was deliberate, confirmed by testing, don't revert
     it.** A plain-string version was tried first (and does work when a
@@ -136,7 +142,8 @@ the workspace-selection prompt that triggers this.
     `https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token` to get an
     app-only bearer token — no user session involved, since the workflow runs
     unattended.
-  - Handler builds the title as `<alias> - <request type> - <date>`, builds
+  - Handler builds the title as
+    `<amazon_alias> - <request_type> - <date> - <submitter_name>`, builds
     the attendee list (submitter + additional attendees, all as Graph
     `attendees` so they get real Outlook invites), and POSTs to
     `/v1.0/users/{MS_SHARED_MAILBOX}/events` with `showAs: "free"` and

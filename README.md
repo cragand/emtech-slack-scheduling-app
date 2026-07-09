@@ -58,6 +58,10 @@ Workflow Builder workflow (built in Slack UI, not in this repo)
       dropdown's actual `4X10 OOTO` value didn't match the table's `4x10 OOTO`
       key) — matching is now case-insensitive, see
       [Outlook categories](#outlook-categories)
+- [x] Split `submitter_alias` into `amazon_alias` (from the roster lookup) and
+      `submitter_name`, and reordered the title — see
+      [Event title](#event-title). Built and unit-tested; not yet confirmed with
+      a real live run
 - [ ] Deploy to Slack-hosted infra (`slack deploy`) for real/autonomous use —
       still only running via local `slack run` today
 
@@ -140,6 +144,18 @@ historical record. Here's what IT actually set up in response:
 - **Client secret expiration**: July 7, 2027. IT has their own reminder to
   rotate it before then — flag them if it gets rotated sooner than that for any
   reason, so their reminder stays accurate.
+
+## Event title
+
+Format: `<amazon_alias> - <request_type> - <date> - <submitter_name>`, e.g.
+`jdoe - Sick - Aug 1, 2026 - John Doe`.
+
+`amazon_alias` and `submitter_name` are two separate inputs, not one —
+`amazon_alias` comes from the company roster lookup (Workflow Builder step 3,
+the same lookup that provides "Internal OOTO Recipients"), while
+`submitter_name` is the person's actual name. These used to be a single field
+(`submitter_alias`) serving double duty; it was split once a real Amazon Alias
+became available as its own piece of roster data.
 
 ## Outlook categories
 

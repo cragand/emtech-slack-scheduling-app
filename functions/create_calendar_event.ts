@@ -13,10 +13,15 @@ export const CreateCalendarEventDefinition = DefineFunction({
   source_file: "functions/create_calendar_event.ts",
   input_parameters: {
     properties: {
-      submitter_alias: {
+      amazon_alias: {
         type: Schema.types.string,
         description:
-          "Alias/name of the request submitter, used in the event title",
+          "Submitter's Amazon Alias, from the company roster lookup (Workflow Builder step 3). First segment of the event title.",
+      },
+      submitter_name: {
+        type: Schema.types.string,
+        description:
+          "Name of the request submitter. Last segment of the event title.",
       },
       submitter_email: {
         type: Schema.types.string,
@@ -58,7 +63,8 @@ export const CreateCalendarEventDefinition = DefineFunction({
       },
     },
     required: [
-      "submitter_alias",
+      "amazon_alias",
+      "submitter_name",
       "submitter_email",
       "request_type",
       "start_date_time",
@@ -155,7 +161,7 @@ function getCalendarDateParts(isoDateTime: string): DateParts {
   return { year: Number(year), month: Number(month), day: Number(day) };
 }
 
-// Title format: "<submitter alias> - <request type> - <start date>"
+// Title format: "<amazon alias> - <request type> - <start date> - <submitter name>"
 export function formatTitleDate(isoDateTime: string): string {
   const { year, month, day } = getCalendarDateParts(isoDateTime);
   return `${SHORT_MONTH_NAMES[month - 1]} ${day}, ${year}`;
@@ -267,7 +273,8 @@ export default SlackFunction(
   CreateCalendarEventDefinition,
   async ({ inputs, env, client }) => {
     const {
-      submitter_alias,
+      amazon_alias,
+      submitter_name,
       submitter_email,
       request_type,
       start_date_time,
@@ -307,9 +314,9 @@ export default SlackFunction(
       return { error: `${err}` };
     }
 
-    const title = `${submitter_alias} - ${request_type} - ${
+    const title = `${amazon_alias} - ${request_type} - ${
       formatTitleDate(start_date_time)
-    }`;
+    } - ${submitter_name}`;
 
     // additional_attendees are Slack user references (e.g. a List's Person
     // column) — Microsoft Graph has no concept of Slack users, so each one
