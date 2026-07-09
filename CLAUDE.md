@@ -143,11 +143,20 @@ the workspace-selection prompt that triggers this.
     app-only bearer token — no user session involved, since the workflow runs
     unattended.
   - Handler builds the title as
-    `<amazon_alias> - <request_type> - <date> - <submitter_name>`, builds
+    `@<amazon_alias> - <request_type> - <date> - <submitter_name>`, builds
     the attendee list (submitter + additional attendees, all as Graph
     `attendees` so they get real Outlook invites), and POSTs to
     `/v1.0/users/{MS_SHARED_MAILBOX}/events` with `showAs: "free"` and
     `categories: [category]` (category derived as above).
+  - **`stripLeadingAt()` strips a leading `@` (and following whitespace) from
+    both `amazon_alias` and `submitter_name` before building the title — the
+    literal `@` in the title is always added in code, on `amazon_alias`
+    specifically.** `submitter_name` is sometimes sourced from a Slack
+    Person-type variable, which renders as `@Display Name` when interpolated
+    into a plain string (same category of bug as the `mailto:` issue) — a
+    real request came through with `submitter_name` carrying the `@` and
+    `amazon_alias` not, producing the wrong title. Stripping from both sides
+    makes the output correct regardless of which input happens to carry one.
   - **`start_date_time`/`end_date_time` are calendar dates, not moments in
     time — never timezone-convert them.** `getCalendarDateParts()` extracts
     the literal `YYYY-MM-DD` prefix via regex and deliberately ignores

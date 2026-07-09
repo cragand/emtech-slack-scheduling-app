@@ -161,10 +161,19 @@ function getCalendarDateParts(isoDateTime: string): DateParts {
   return { year: Number(year), month: Number(month), day: Number(day) };
 }
 
-// Title format: "<amazon alias> - <request type> - <start date> - <submitter name>"
+// Title format: "@<amazon alias> - <request type> - <start date> - <submitter name>"
 export function formatTitleDate(isoDateTime: string): string {
   const { year, month, day } = getCalendarDateParts(isoDateTime);
   return `${SHORT_MONTH_NAMES[month - 1]} ${day}, ${year}`;
+}
+
+// Strips a leading "@" (and any whitespace right after it) from a name.
+// submitter_name is sometimes sourced from a Slack Person-type variable,
+// which renders as "@Display Name" when interpolated into a plain string —
+// the "@" belongs on amazon_alias in the title, not here, regardless of
+// whether the incoming value happens to carry one already.
+export function stripLeadingAt(value: string): string {
+  return value.replace(/^@\s*/, "");
 }
 
 // Adds `days` calendar days to a Y/M/D triple. Uses UTC as a neutral, DST-free
@@ -314,9 +323,9 @@ export default SlackFunction(
       return { error: `${err}` };
     }
 
-    const title = `${amazon_alias} - ${request_type} - ${
+    const title = `@${stripLeadingAt(amazon_alias)} - ${request_type} - ${
       formatTitleDate(start_date_time)
-    } - ${submitter_name}`;
+    } - ${stripLeadingAt(submitter_name)}`;
 
     // additional_attendees are Slack user references (e.g. a List's Person
     // column) — Microsoft Graph has no concept of Slack users, so each one

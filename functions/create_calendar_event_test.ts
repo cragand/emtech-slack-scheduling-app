@@ -6,6 +6,7 @@ import CreateCalendarEvent, {
   getAllDayEventRange,
   getCategoryForRequestType,
   parseEmailList,
+  stripLeadingAt,
 } from "./create_calendar_event.ts";
 
 const { createContext } = SlackFunctionTester("create_calendar_event");
@@ -21,7 +22,10 @@ const FAKE_ENV = {
 
 const BASE_INPUTS = {
   amazon_alias: "jdoe",
-  submitter_name: "John Doe",
+  // Simulates a Slack Person-type variable rendering as "@Display Name" when
+  // interpolated into a plain string — the real-world case that motivated
+  // stripLeadingAt().
+  submitter_name: "@John Doe",
   submitter_email: "jdoe@example.com",
   request_type: "Sick",
   // Midnight UTC, matching what Slack's date field actually sends for a
@@ -80,6 +84,13 @@ function stubSlackApi(
     return undefined;
   };
 }
+
+Deno.test("stripLeadingAt removes a leading @ and any following whitespace", () => {
+  assertEquals(stripLeadingAt("@John Doe"), "John Doe");
+  assertEquals(stripLeadingAt("@ John Doe"), "John Doe");
+  assertEquals(stripLeadingAt("John Doe"), "John Doe");
+  assertEquals(stripLeadingAt("cragandb"), "cragandb");
+});
 
 Deno.test("formatTitleDate uses the literal date, ignoring any time/offset suffix", () => {
   assertEquals(formatTitleDate("2026-08-01T00:00:00Z"), "Aug 1, 2026");
@@ -236,7 +247,7 @@ Deno.test("create_calendar_event happy path sends the expected Graph request", a
 
   assertEquals(error, undefined);
   assertExists(capturedBody);
-  assertEquals(capturedBody?.subject, "jdoe - Sick - Aug 1, 2026 - John Doe");
+  assertEquals(capturedBody?.subject, "@jdoe - Sick - Aug 1, 2026 - John Doe");
   assertEquals(capturedBody?.showAs, "free");
   assertEquals(capturedBody?.attendees, [
     { emailAddress: { address: "jdoe@example.com" }, type: "required" },

@@ -147,8 +147,9 @@ historical record. Here's what IT actually set up in response:
 
 ## Event title
 
-Format: `<amazon_alias> - <request_type> - <date> - <submitter_name>`, e.g.
-`jdoe - Sick - Aug 1, 2026 - John Doe`.
+Format: `@<amazon_alias> - <request_type> - <date> - <submitter_name>`, e.g.
+`@jdoe - Sick - Aug 1, 2026 - John Doe`. The `@` always belongs on
+`amazon_alias`, never on `submitter_name`.
 
 `amazon_alias` and `submitter_name` are two separate inputs, not one —
 `amazon_alias` comes from the company roster lookup (Workflow Builder step 3,
@@ -156,6 +157,14 @@ the same lookup that provides "Internal OOTO Recipients"), while
 `submitter_name` is the person's actual name. These used to be a single field
 (`submitter_alias`) serving double duty; it was split once a real Amazon Alias
 became available as its own piece of roster data.
+
+`submitter_name` is sometimes sourced from a Slack Person-type variable, which
+renders as `@Display Name` (with the `@` baked into the string) when
+interpolated into a plain-text field — the same category of formatting
+bleed-through as the `mailto:` issue with external attendees. `stripLeadingAt()`
+strips a leading `@` from both `amazon_alias` and `submitter_name` before
+building the title, so the `@` always ends up in exactly the right place
+regardless of which input happened to carry one in already.
 
 ## Outlook categories
 
