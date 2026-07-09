@@ -51,7 +51,10 @@ Workflow Builder workflow (built in Slack UI, not in this repo)
       string (a plain **Text** List column, "External OOTO Recipients" — the
       Email-type column was tried first and turned out to not support saving
       more than one value) — see [External attendees](#external-attendees).
-      Built and unit-tested; not yet confirmed with a real live run
+      First live test surfaced a real bug (Slack's rich-text auto-linkifying
+      added a `mailto:` prefix that silently broke delivery) — fixed by
+      stripping it in `parseEmailList()`. Not yet re-confirmed live since the
+      fix
 - [ ] Deploy to Slack-hosted infra (`slack deploy`) for real/autonomous use —
       still only running via local `slack run` today
 
@@ -258,6 +261,17 @@ on our end. The Text-column-plus-parsing approach here is the workaround.
 These get combined with the resolved internal attendees into one Graph
 `attendees` list — external contacts receive the same real Outlook invite as
 everyone else.
+
+**A real bug already happened here, now fixed:** Slack's List Text column
+auto-linkifies email-looking text, and whatever serialization turns that
+rich-text value into a plain string variable carries the `mailto:` scheme along
+with it (e.g. `mailto:name@x.com` instead of `name@x.com`). This still passed
+our own validation (the pattern doesn't exclude colons) and Graph accepted the
+event creation without error, but Exchange never actually delivered an invite to
+the real address underneath — confirmed live: the event showed "N emails are
+invalid" in Outlook and the external attendees never received anything.
+`parseEmailList()` now strips a leading `mailto:` (case-insensitive) from each
+entry before validating it.
 
 ## Known limitation: attendees' free/busy status
 

@@ -165,6 +165,17 @@ Deno.test("parseEmailList returns an error naming the first invalid entry", () =
   assertStringIncludes((result as { error: string }).error, "not-an-email");
 });
 
+Deno.test("parseEmailList strips a leading mailto: from each entry (regression)", () => {
+  // Real bug: Slack's List Text column auto-linkifies emails, and the
+  // "mailto:" scheme survived into the plain string variable. Graph/Exchange
+  // silently accepted "mailto:name@x.com" as an attendee address but never
+  // delivered an invite to the real address underneath.
+  assertEquals(
+    parseEmailList("mailto:a@x.com Mailto:b@y.com MAILTO:c@z.com"),
+    { emails: ["a@x.com", "b@y.com", "c@z.com"] },
+  );
+});
+
 Deno.test("getCategoryForRequestType maps every known Request Type value", () => {
   assertEquals(getCategoryForRequestType("Sick"), "OOTO");
   assertEquals(getCategoryForRequestType("Vacation"), "OOTO");

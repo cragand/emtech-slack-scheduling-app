@@ -228,12 +228,20 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // matching however someone naturally types a list of emails. Returns an
 // error naming the first entry that doesn't look like a valid email, rather
 // than silently sending something malformed to Graph.
+//
+// Strips a leading "mailto:" from each entry — Slack's List Text column
+// auto-linkifies email-looking text, and whatever serialization turns that
+// rich-text value into a plain string variable carries the "mailto:" scheme
+// along with it. A real bug happened from missing this: Graph/Exchange
+// silently accepted "mailto:name@x.com" as an attendee address (it still
+// matches EMAIL_PATTERN — the pattern doesn't exclude colons) but never
+// actually delivered an invite to the real underlying address.
 export function parseEmailList(
   value: string | undefined,
 ): { emails: string[] } | { error: string } {
   const entries = (value ?? "")
     .split(/[\s,;]+/)
-    .map((entry) => entry.trim())
+    .map((entry) => entry.trim().replace(/^mailto:/i, ""))
     .filter((entry) => entry.length > 0);
 
   for (const entry of entries) {

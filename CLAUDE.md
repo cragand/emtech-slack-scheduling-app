@@ -101,10 +101,20 @@ the workspace-selection prompt that triggers this.
     documented data model and what the UI/backend actually supports as of
     this writing. Don't revert to the array/Email-column version without
     first confirming Slack has fixed that. Combined with the resolved
-    internal emails into one Graph `attendees` list. Not yet confirmed with a
-    real live run (built + unit-tested only, as of this writing). See
-    README's "Additional attendees" / "External attendees" sections for the
-    full reasoning.
+    internal emails into one Graph `attendees` list. First live test
+    surfaced a real bug (see next bullet); not yet re-confirmed live since
+    the fix. See README's "Additional attendees" / "External attendees"
+    sections for the full reasoning.
+  - **`parseEmailList()` strips a leading `mailto:` (case-insensitive) from
+    each entry — don't remove this.** A real bug shipped without it: Slack's
+    List Text column auto-linkifies email-looking text, and whatever
+    serialization turns that rich-text value into a plain string variable
+    carries the `mailto:` scheme along with it. `EMAIL_PATTERN` doesn't
+    exclude colons, so `mailto:name@x.com` passed validation and Graph
+    accepted the event with no error — but Exchange never delivered an
+    invite to the real address underneath. Confirmed live (before the fix):
+    Outlook showed "N emails are invalid" and the external attendees
+    received nothing.
   - There is **no separate `category` input** — a first attempt added one,
     but it caused a real "failed to start due to an invalid parameter"
     failure in production because the Workflow Builder step wasn't
