@@ -1,1 +1,10 @@
-{}
+{
+  "apps": {
+    "T05MW5Q230X": {
+      "app_id": "A0BGD5F67RQ",
+      "team_domain": "emtechllc",
+      "team_id": "T05MW5Q230X"
+    }
+  },
+  "default": "emtechllc"
+}

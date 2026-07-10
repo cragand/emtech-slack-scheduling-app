@@ -37,9 +37,31 @@ deno lint
 # Deploy to Slack-hosted infra (prompts for a trigger on first deploy)
 slack deploy
 
-# Set an env var for the deployed app (local dev uses .env instead)
-slack env add MS_TENANT_ID <value>
+# Set an env var for the deployed app (local dev uses .env instead) —
+# omit the value so the CLI prompts for it, and always pass --app explicitly
+# (see gotcha below); find the deployed app's ID via `slack deploy`'s output
+# or .slack/apps.json
+slack env add MS_TENANT_ID --app <deployed app ID>
 ```
+
+**Two app identities, one project — `--app` matters for `env add`/`env list`:**
+`.slack/apps.dev.json` is the dev/local app (`IsDev: true`); `.slack/apps.json`
+is the deployed production app. `slack env add`/`slack env list` without an
+explicit `--app <app ID>` targets the **dev** app, not the deployed one — this
+already caused a real outage-in-waiting: all 5 Graph env vars were set
+successfully but landed on the dev app, so the freshly-deployed production step
+failed on every live run with a missing-env-var error until redone with
+`--app <deployed app ID>`. Always pass `--app` explicitly for the deployed app
+when asked to set or verify production env vars; `slack env list --app <id>`
+is safe to run freely (names only, values stay masked).
+
+**Pasted env var values can silently double.** A separate real incident on the
+same deploy: `MS_TENANT_ID` got saved as the real GUID repeated twice
+back-to-back after a paste into the `slack env add` prompt. Graph surfaced this
+clearly (`AADSTS900023: ... is neither a valid DNS name, nor a valid external
+domain`, with the doubled value visible in the error text) — if a similar
+"tenant/client identifier not valid" error comes back after credentials were
+just set, suspect a doubled paste before suspecting a permissions problem.
 
 **Windows/PATH gotcha:** Deno is installed via winget but this shell session
 was live before the PATH update landed, so `deno`/`slack` may not resolve in
@@ -206,13 +228,6 @@ the workspace-selection prompt that triggers this.
   don't "fix" it without checking with the user first, since the alternative
   (patching each attendee's own event copy) requires Graph permissions scoped
   to every attendee's mailbox, a much bigger ask of IT.
-
-- **Leftover scaffold, not part of the real app**: `workflows/sample_workflow.ts`,
-  `functions/sample_function.ts` (+ `_test.ts`), `datastores/sample_datastore.ts`,
-  `triggers/sample_trigger.ts`. These are the default `slack create` template
-  and are unrelated to the scheduling feature. Don't extend them by habit when
-  asked to add functionality — check whether the ask actually belongs in
-  `create_calendar_event.ts` instead.
 
 ## Current blocking dependency
 

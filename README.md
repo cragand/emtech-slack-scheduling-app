@@ -60,14 +60,18 @@ Workflow Builder workflow (built in Slack UI, not in this repo)
       [Outlook categories](#outlook-categories)
 - [x] Split `submitter_alias` into `amazon_alias` (from the roster lookup) and
       `submitter_name`, and reordered the title — see
-      [Event title](#event-title). Built and unit-tested; not yet confirmed with
-      a real live run
-- [ ] Deploy to Slack-hosted infra (`slack deploy`) for real/autonomous use —
-      still only running via local `slack run` today
+      [Event title](#event-title). Confirmed working with a real live run
+- [x] Deployed to Slack-hosted infra (`slack deploy`) — the app runs as
+      **"Emtech Scheduling"** (no `(local)` suffix) in Emtech, LLC, with
+      production env vars set via `slack env add --app <deployed app ID>` (see
+      [Environment variables](#environment-variables)). The workflow's step now
+      points at the deployed function, not the local dev one. Confirmed working
+      with a real live run
 
-Real end-to-end testing is working locally via `slack run`. See
+This app is fully deployed and running live — no local `slack run` process needs
+to stay on for it to work. See
 [Operational considerations](#operational-considerations-for-liveautonomous-use)
-for what's still needed before this runs unattended in production.
+for ongoing maintenance notes (secret rotation, etc.).
 
 ## Prerequisites
 
@@ -95,8 +99,9 @@ running, a local version of the app (`Emtech Scheduling (local)`) is installed
 in the workspace and its step is selectable in Workflow Builder.
 
 `--team emtechllc` skips an interactive workspace-selection prompt that fails in
-non-interactive shells; `--hide-triggers` skips prompts related to the unused
-sample trigger (see [Leftover scaffold files](#leftover-scaffold-files)).
+non-interactive shells; `--hide-triggers` skips a trigger-creation prompt (this
+app has no triggers of its own — the workflow is triggered from within Workflow
+Builder, not a Slack CLI trigger).
 
 ## Environment variables
 
@@ -111,8 +116,29 @@ Copy `.env.example` to `.env` and fill in real values once IT provides them:
 | `MS_EVENT_TIMEZONE` | IANA timezone used for the event's start/end: `America/Los_Angeles` (Emtech operations are Pacific-based) |
 
 `slack run` automatically picks up `.env` locally. For the deployed app, set
-these with `slack env add <NAME> <VALUE>` instead — `.env` is git-ignored and
-never used once deployed.
+these with `slack env add <NAME>` instead (omit the value so the CLI prompts for
+it, keeping secrets out of shell history) — `.env` is git-ignored and never used
+once deployed.
+
+**This project has two separate app identities** — a dev/local one
+(`.slack/apps.dev.json`) and the deployed production one (`.slack/apps.json`).
+`slack env add` without an explicit `--app <app ID>` flag targets the dev app,
+_not_ the deployed one — a real deploy surfaced this: all 5 vars were set
+successfully but on the wrong app, so the live step failed with a missing-var
+error until they were redone with `--app <deployed app ID>` (find the deployed
+app's ID from `slack deploy`'s output, or `.slack/apps.json`). Use
+`slack env list --app <app ID>` to check which variables (by name only, values
+stay masked) exist on a given app — handy for confirming this without exposing
+any secret.
+
+A second real issue on the same deploy: pasting a value into the `slack env add`
+prompt somehow doubled it (e.g. `MS_TENANT_ID` got saved as the real tenant ID
+repeated twice back-to-back, which Microsoft's `AADSTS900023` error will call
+out clearly if it happens again). If a Graph call fails with a "tenant/client
+identifier is not valid" error, check whether the corresponding value looks
+doubled before assuming it's a permissions problem — redo just that one
+variable, watching the terminal to make sure only one clean paste lands before
+hitting enter.
 
 ### Getting credentials from IT
 
@@ -332,8 +358,6 @@ can't be resolved), and the missing-env-var / unrecognized-request-type /
 invalid-external-attendee / token-failure error paths — all with `fetch` mocked
 via `@std/testing/mock` (including Slack's own Web API calls), so no live
 credential or network call is needed to run it.
-`functions/sample_function_test.ts` is unrelated, from the default scaffold (see
-below).
 
 ## Deploying
 
@@ -346,12 +370,10 @@ slack deploy
 Set production environment variables first with `slack env add`, since `.env` is
 only used for local `slack run`.
 
-## Leftover scaffold files
-
-`workflows/sample_workflow.ts`, `functions/sample_function.ts` (+ its test),
-`datastores/sample_datastore.ts`, and `triggers/sample_trigger.ts` are unused
-template files from `slack create`, unrelated to the scheduling app. They're
-left in place but can be deleted if the project needs cleaning up.
+After the first deploy, swap the workflow's step from the `(local)` version of
+"Create scheduling calendar event" to the deployed version in Workflow Builder,
+re-mapping every input — Slack doesn't carry input mappings over between steps
+automatically.
 
 ## Resources
 
