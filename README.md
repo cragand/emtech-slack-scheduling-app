@@ -174,8 +174,9 @@ historical record. Here's what IT actually set up in response:
 ## Event title
 
 Format: `@<amazon_alias> - <request_type> - <date> - <submitter_name>`, e.g.
-`@jdoe - Sick - Aug 1, 2026 - John Doe`. The `@` always belongs on
-`amazon_alias`, never on `submitter_name`.
+`@jdoe - Sick - Aug 1 - John Doe`. The `@` always belongs on `amazon_alias`,
+never on `submitter_name`. The date deliberately omits the year — it's always
+obvious from the calendar page the event appears on.
 
 `amazon_alias` and `submitter_name` are two separate inputs, not one —
 `amazon_alias` comes from the company roster lookup (Workflow Builder step 3,

@@ -93,16 +93,21 @@ Deno.test("stripLeadingAt removes a leading @ and any following whitespace", () 
 });
 
 Deno.test("formatTitleDate uses the literal date, ignoring any time/offset suffix", () => {
-  assertEquals(formatTitleDate("2026-08-01T00:00:00Z"), "Aug 1, 2026");
-  assertEquals(formatTitleDate("2026-08-01T23:59:00Z"), "Aug 1, 2026");
-  assertEquals(formatTitleDate("2026-08-01T09:00:00"), "Aug 1, 2026");
+  assertEquals(formatTitleDate("2026-08-01T00:00:00Z"), "Aug 1");
+  assertEquals(formatTitleDate("2026-08-01T23:59:00Z"), "Aug 1");
+  assertEquals(formatTitleDate("2026-08-01T09:00:00"), "Aug 1");
+});
+
+Deno.test("formatTitleDate omits the year", () => {
+  assertEquals(formatTitleDate("2026-08-01T00:00:00Z"), "Aug 1");
+  assertEquals(formatTitleDate("2027-01-15T00:00:00Z"), "Jan 15");
 });
 
 Deno.test("formatTitleDate does not roll a midnight-UTC date back a day (regression)", () => {
   // This is the exact bug that was reported: a date-only value serialized
   // as midnight UTC ("2026-07-08T00:00:00Z") was being timezone-converted
   // to America/Los_Angeles, landing on July 7 evening instead of July 8.
-  assertEquals(formatTitleDate("2026-07-08T00:00:00Z"), "Jul 8, 2026");
+  assertEquals(formatTitleDate("2026-07-08T00:00:00Z"), "Jul 8");
 });
 
 Deno.test("getAllDayEventRange covers a single day with an exclusive end", () => {
@@ -247,7 +252,7 @@ Deno.test("create_calendar_event happy path sends the expected Graph request", a
 
   assertEquals(error, undefined);
   assertExists(capturedBody);
-  assertEquals(capturedBody?.subject, "@jdoe - Sick - Aug 1, 2026 - John Doe");
+  assertEquals(capturedBody?.subject, "@jdoe - Sick - Aug 1 - John Doe");
   assertEquals(capturedBody?.showAs, "free");
   assertEquals(capturedBody?.attendees, [
     { emailAddress: { address: "jdoe@example.com" }, type: "required" },

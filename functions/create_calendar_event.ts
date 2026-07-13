@@ -162,9 +162,11 @@ function getCalendarDateParts(isoDateTime: string): DateParts {
 }
 
 // Title format: "@<amazon alias> - <request type> - <start date> - <submitter name>"
+// The year is deliberately omitted — it's always obvious from the calendar
+// page the event appears on, and including it just added noise.
 export function formatTitleDate(isoDateTime: string): string {
-  const { year, month, day } = getCalendarDateParts(isoDateTime);
-  return `${SHORT_MONTH_NAMES[month - 1]} ${day}, ${year}`;
+  const { month, day } = getCalendarDateParts(isoDateTime);
+  return `${SHORT_MONTH_NAMES[month - 1]} ${day}`;
 }
 
 // Strips a leading "@" (and any whitespace right after it) from a name.
