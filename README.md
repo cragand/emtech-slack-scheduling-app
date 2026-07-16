@@ -67,6 +67,17 @@ Workflow Builder workflow (built in Slack UI, not in this repo)
       [Environment variables](#environment-variables)). The workflow's step now
       points at the deployed function, not the local dev one. Confirmed working
       with a real live run
+- [x] Split the single catch-all workflow into purpose-specific workflows (Sick,
+      Vacation, OOTO, 4x10 OOTO) so only some request types require approval —
+      see [Purpose-specific workflows](#purpose-specific-workflows)
+- [x] Added `is_partial_day` so OOTO requests can cover part of a day instead of
+      always being full-day — see [Partial-day requests](#partial-day-requests).
+      Confirmed working with a real live run
+- [x] Added `is_recurring`/`recurrence_end_date`/`recurrence_day_of_week` so
+      4x10 OOTO requests can recur weekly instead of requiring a fresh
+      submission every week — see
+      [Recurring requests (4x10 OOTO)](#recurring-requests-4x10-ooto). Built and
+      unit-tested; not yet confirmed with a real live run
 
 This app is fully deployed and running live — no local `slack run` process needs
 to stay on for it to work. See
@@ -229,12 +240,26 @@ this table's key (`4x10 OOTO`) under an exact-case comparison. The table's keys
 can stay whatever casing is convenient to read; matching doesn't depend on it
 lining up exactly with the dropdown.
 
+## Purpose-specific workflows
+
+Rather than one catch-all workflow handling every request type, each request
+type now has its own Workflow Builder workflow (Sick, Vacation, OOTO, 4x10 OOTO)
+— done so some request types can skip an approval step entirely (a sick employee
+doesn't need approval to be sick), which a single shared workflow couldn't
+express. All of them call the same `create_calendar_event` step; they just map
+different subsets of its inputs. Sick and Vacation only use the original fields.
+OOTO additionally supports partial-day requests. 4x10 OOTO additionally supports
+weekly recurrence. Every new input added for these is optional, so adding one
+doesn't require touching the other workflows' step configurations at all.
+
 ## All-day events
 
 Every event this step creates is a full-day calendar entry (Graph's
-`isAllDay: true`), regardless of request type — there's no clock-time component,
-matching how absence/status requests are actually used. A couple of details
-worth knowing:
+`isAllDay: true`) by default, regardless of request type — there's no clock-time
+component, matching how absence/status requests are actually used. The OOTO
+workflow can override this per request via `is_partial_day` — see
+[Partial-day requests](#partial-day-requests). A couple of details worth knowing
+about the all-day path itself:
 
 - **`end_date_time` is the _last_ day of the request, inclusive** — e.g. a
   single-day request has the same date for `start_date_time` and
@@ -256,7 +281,86 @@ worth knowing:
   That bug was real and shipped briefly — a two-day request submitted as 7/8–7/9
   came out as 7/7–7/8 on the actual calendar. `MS_EVENT_TIMEZONE` is still used,
   just only to tell Graph what "midnight" means for the constructed date range,
-  never to determine which date it is in the first place.
+  never to determine which date it is in the first place. This only applies to
+  values from a plain **Date** field — see
+  [Partial-day requests](#partial-day-requests) for the other format this code
+  now has to handle.
+
+## Partial-day requests
+
+The OOTO workflow supports `is_partial_day` ("Yes"/"No", from a dropdown — not a
+boolean; see below) so a request can cover only part of a day instead of always
+being a full-day event. When true, the event is created with `isAllDay: false`
+and real clock times instead of midnight-to-midnight.
+
+**`is_partial_day` is a string, not a boolean, on purpose.** Boolean-typed step
+inputs can't be mapped to a per-submission variable in Workflow Builder's step
+configuration — they only render as a fixed checkbox, the same value for every
+run regardless of what the form collected. Switched to a string sourced from a
+Yes/No dropdown instead, matched case-insensitively via `isPartialDayRequest()`,
+the same pattern used elsewhere in this code for exact-case mismatches (see
+[Outlook categories](#outlook-categories)).
+
+**Because partial-day requests need real clock times, not just a date, the OOTO
+workflow's `start_date_time`/`end_date_time` fields use Workflow Builder's "Date
+and time" field type instead of the plain "Date" field Sick/Vacation/4x10 use —
+and this sends a completely different raw format: a bare Unix timestamp (e.g.
+`"1784235600"`) instead of an ISO string.** This surfaced as a real crash the
+first time it was tested (`Expected an ISO date string, got "1784235600"`), and
+broke _every_ OOTO submission, partial-day or not, since
+`start_date_time`/`end_date_time` are Date-and-time fields unconditionally on
+that workflow. Unlike the plain Date field's midnight-UTC quirk (never
+timezone-convert it — see above), this Unix timestamp is a genuine,
+correctly-computed real instant, confirmed against a live submission (a 2:00
+PM–7:00 PM Pacific request came through as exactly `21:00:00Z`–`02:00:00Z` the
+next day UTC) — so it needs the _opposite_ handling: converting it into
+`MS_EVENT_TIMEZONE` to recover the wall-clock date/time that was actually
+picked. `create_calendar_event.ts` now detects which of the two formats it
+received and applies the correct handling for each.
+
+**A "No" answer to `is_partial_day` is always safe, even if the underlying
+Date-and-time field still carries specific hours** (e.g. someone's normal 9:00
+AM–5:30 PM shift) — the all-day code path never reads the time-of-day portion at
+all when `is_partial_day` is false, regardless of which raw format it came from.
+Confirmed via test and live use.
+
+## Recurring requests (4x10 OOTO)
+
+The 4x10 OOTO workflow supports a weekly-recurring day off, for the common case
+of someone consistently taking the same day off every week, so they don't have
+to submit a fresh request every single week. Three optional inputs, all only
+mapped by this workflow:
+
+- `is_recurring` — "Yes"/"No" (a string, same reasoning as `is_partial_day`
+  above), matched via `isRecurringRequest()`
+- `recurrence_end_date` — the last date the series should generate through,
+  inclusive. Deliberately **always required (never open-ended/"no end")** — an
+  indefinitely recurring day-off doesn't account for someone's schedule
+  changing, so every recurring request has a bounded horizon and needs
+  resubmitting to continue past it
+- `recurrence_day_of_week` — which weekday recurs, sourced from a single-select
+  day-of-week dropdown already in the form, matched case-insensitively via
+  `normalizeDayOfWeek()` against the seven day names
+
+`start_date_time`/`end_date_time` are still required and both mapped to the same
+single "day off" date field (the same trick a single-day Sick/Vacation request
+already uses) — this workflow keeps the plain **Date** field type throughout,
+never Date-and-time, since it never needs partial-day logic. `is_partial_day`
+and `is_recurring` are mutually exclusive; the step rejects a request that sets
+both.
+
+**`start_date_time`'s weekday doesn't need to match `recurrence_day_of_week`.**
+Graph's recurrence `range.startDate` just tells it "start generating occurrences
+from here forward" — it finds the first actual matching weekday on or after that
+date itself, so these are two independent pieces of information, not two values
+that could disagree the way the partial-day time fields could have (see
+`buildWeeklyRecurrence()`'s tests).
+
+**No self-service way to change or cancel a recurring request yet** — this app
+only ever creates events, with no update/cancel capability at all. For now,
+changing a schedule or ending a series early means manually editing it directly
+in Outlook (Andrew and Simon have full access to the shared mailbox). Worth
+revisiting if this becomes a frequent need.
 
 ## Operational considerations for live/autonomous use
 
@@ -355,10 +459,12 @@ request-type-to-category mapping, `parseEmailList()`'s delimiter handling and
 invalid-entry detection, the exact request sent to Microsoft Graph (subject,
 attendees, `showAs`, `categories`), attendee resolution (internal + external
 combined, and the best-effort skip-and-notify behavior when an internal attendee
-can't be resolved), and the missing-env-var / unrecognized-request-type /
-invalid-external-attendee / token-failure error paths — all with `fetch` mocked
-via `@std/testing/mock` (including Slack's own Web API calls), so no live
-credential or network call is needed to run it.
+can't be resolved), the partial-day and recurring-event logic (both ISO-string
+and Unix-timestamp date/time formats, the mutual-exclusion check between them,
+and the missing/invalid-field error paths), and the missing-env-var /
+unrecognized-request-type / invalid-external-attendee / token-failure error
+paths — all with `fetch` mocked via `@std/testing/mock` (including Slack's own
+Web API calls), so no live credential or network call is needed to run it.
 
 ## Deploying
 

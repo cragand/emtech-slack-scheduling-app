@@ -66,6 +66,21 @@ export const CreateCalendarEventDefinition = DefineFunction({
         description:
           "Whether this request covers only part of a day rather than the full day(s) — a string rather than a boolean because boolean-typed inputs can't be mapped to a per-submission variable in Workflow Builder's step configuration (they only render as a fixed checkbox). Sourced from a 'Yes'/'No' dropdown; matched case-insensitively against \"yes\" via isPartialDayRequest(). When true, the time-of-day portions of start_date_time/end_date_time are used to create a timed (non-all-day) event instead of being ignored. Optional — omitted entirely by workflows that don't support partial days (Sick, Vacation, 4x10 OOTO), which keeps them on the existing all-day behavior untouched.",
       },
+      is_recurring: {
+        type: Schema.types.string,
+        description:
+          "Whether this is a recurring weekly request (e.g. a 4x10 schedule's consistent day off) — a string 'Yes'/'No' for the same reason is_partial_day is, matched case-insensitively via isRecurringRequest(). When true, recurrence_end_date and recurrence_day_of_week are required, and the created event repeats weekly through that end date. Optional — omitted by workflows that don't support recurrence (Sick, Vacation, OOTO), which keeps them on today's single-event behavior untouched. Mutually exclusive with is_partial_day.",
+      },
+      recurrence_end_date: {
+        type: Schema.types.string,
+        description:
+          "The last date the recurring series should generate occurrences through, inclusive. ISO 8601 (e.g. from a plain Date field) — only used when is_recurring is true.",
+      },
+      recurrence_day_of_week: {
+        type: Schema.types.string,
+        description:
+          "Which day of the week the recurring event falls on (e.g. from a single-select day-of-week dropdown already in the form). Matched case-insensitively against the seven day names via normalizeDayOfWeek() — only used when is_recurring is true. Doesn't need to match the weekday of start_date_time; Graph starts generating from start_date_time forward and finds the first matching weekday on or after it.",
+      },
     },
     required: [
       "amazon_alias",
@@ -294,6 +309,58 @@ export function isPartialDayRequest(value: string | undefined): boolean {
   return (value ?? "").trim().toLowerCase() === "yes";
 }
 
+export function isRecurringRequest(value: string | undefined): boolean {
+  return (value ?? "").trim().toLowerCase() === "yes";
+}
+
+const VALID_DAYS_OF_WEEK = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
+// Matches case-insensitively (and trims whitespace) against the seven day
+// names, same reasoning as getCategoryForRequestType and
+// isPartialDayRequest — the dropdown's exact wording/case shouldn't matter.
+// Returns the canonically-cased name Graph expects, or undefined if the
+// value isn't a recognized day.
+export function normalizeDayOfWeek(
+  value: string | undefined,
+): string | undefined {
+  const normalized = (value ?? "").trim().toLowerCase();
+  return VALID_DAYS_OF_WEEK.find((day) => day.toLowerCase() === normalized);
+}
+
+// Builds a Graph weekly recurrence: repeats every week on dayOfWeek,
+// starting from startDateTime's date and continuing through
+// recurrenceEndDate, inclusive. startDateTime doesn't need to fall on
+// dayOfWeek itself — Graph starts generating occurrences from that date
+// forward and finds the first matching weekday on or after it.
+// https://learn.microsoft.com/en-us/graph/api/resources/recurrencepattern
+export function buildWeeklyRecurrence(
+  startDateTime: string,
+  recurrenceEndDate: string,
+  dayOfWeek: string,
+  timeZone: string,
+) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const toDateOnly = ({ year, month, day }: DateParts) =>
+    `${year}-${pad(month)}-${pad(day)}`;
+
+  return {
+    pattern: { type: "weekly", interval: 1, daysOfWeek: [dayOfWeek] },
+    range: {
+      type: "endDate",
+      startDate: toDateOnly(getCalendarDateParts(startDateTime, timeZone)),
+      endDate: toDateOnly(getCalendarDateParts(recurrenceEndDate, timeZone)),
+    },
+  };
+}
+
 // Computes the start/end dateTime strings for an all-day Graph event. Graph
 // requires all-day start/end to both be midnight (paired with a timeZone by
 // the caller), with an *exclusive* end — i.e., the day after the last day
@@ -397,11 +464,43 @@ export default SlackFunction(
       additional_attendees,
       external_attendees,
       is_partial_day,
+      is_recurring,
+      recurrence_end_date,
+      recurrence_day_of_week,
     } = inputs;
 
     const mailbox = env["MS_SHARED_MAILBOX"];
     if (!mailbox) {
       return { error: "Missing MS_SHARED_MAILBOX environment variable" };
+    }
+
+    const partialDay = isPartialDayRequest(is_partial_day);
+    const recurring = isRecurringRequest(is_recurring);
+
+    if (partialDay && recurring) {
+      return {
+        error:
+          "is_partial_day and is_recurring can't both be true — a request is never both a partial day and a recurring day off",
+      };
+    }
+
+    let recurrenceDayOfWeek: string | undefined;
+    let recurrenceEndDate: string | undefined;
+    if (recurring) {
+      if (!recurrence_end_date || !recurrence_day_of_week) {
+        return {
+          error:
+            "is_recurring is true, but recurrence_end_date and/or recurrence_day_of_week weren't provided",
+        };
+      }
+      recurrenceDayOfWeek = normalizeDayOfWeek(recurrence_day_of_week);
+      if (!recurrenceDayOfWeek) {
+        return {
+          error:
+            `"${recurrence_day_of_week}" isn't a recognized day of the week`,
+        };
+      }
+      recurrenceEndDate = recurrence_end_date;
     }
 
     const category = getCategoryForRequestType(request_type);
@@ -464,7 +563,6 @@ export default SlackFunction(
       ),
     ];
 
-    const partialDay = isPartialDayRequest(is_partial_day);
     const range = partialDay
       ? getPartialDayEventRange(start_date_time, end_date_time, timeZone)
       : getAllDayEventRange(start_date_time, end_date_time, timeZone);
@@ -481,6 +579,16 @@ export default SlackFunction(
       // change how attendees' own calendars display the event once accepted.
       showAs: "free",
       categories: [category],
+      ...(recurring && recurrenceDayOfWeek && recurrenceEndDate
+        ? {
+          recurrence: buildWeeklyRecurrence(
+            start_date_time,
+            recurrenceEndDate,
+            recurrenceDayOfWeek,
+            timeZone,
+          ),
+        }
+        : {}),
     };
 
     const response = await fetch(

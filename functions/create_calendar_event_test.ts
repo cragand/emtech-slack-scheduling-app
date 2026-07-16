@@ -2,11 +2,14 @@ import { SlackFunctionTester } from "deno-slack-sdk/mod.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
 import { stub } from "@std/testing/mock";
 import CreateCalendarEvent, {
+  buildWeeklyRecurrence,
   formatTitleDate,
   getAllDayEventRange,
   getCategoryForRequestType,
   getPartialDayEventRange,
   isPartialDayRequest,
+  isRecurringRequest,
+  normalizeDayOfWeek,
   parseEmailList,
   stripLeadingAt,
 } from "./create_calendar_event.ts";
@@ -207,6 +210,54 @@ Deno.test("isPartialDayRequest matches 'yes' regardless of case or surrounding w
   assertEquals(isPartialDayRequest("No"), false);
   assertEquals(isPartialDayRequest(undefined), false);
   assertEquals(isPartialDayRequest(""), false);
+});
+
+Deno.test("isRecurringRequest matches 'yes' regardless of case or surrounding whitespace", () => {
+  assertEquals(isRecurringRequest("Yes"), true);
+  assertEquals(isRecurringRequest("yes"), true);
+  assertEquals(isRecurringRequest("  YES  "), true);
+  assertEquals(isRecurringRequest("No"), false);
+  assertEquals(isRecurringRequest(undefined), false);
+});
+
+Deno.test("normalizeDayOfWeek matches regardless of case, returning the canonical name", () => {
+  assertEquals(normalizeDayOfWeek("Friday"), "Friday");
+  assertEquals(normalizeDayOfWeek("friday"), "Friday");
+  assertEquals(normalizeDayOfWeek("FRIDAY"), "Friday");
+  assertEquals(normalizeDayOfWeek("  Monday  "), "Monday");
+  assertEquals(normalizeDayOfWeek("Someday"), undefined);
+  assertEquals(normalizeDayOfWeek(undefined), undefined);
+});
+
+Deno.test("buildWeeklyRecurrence builds a weekly pattern anchored on the start date", () => {
+  const recurrence = buildWeeklyRecurrence(
+    "2026-07-24T00:00:00Z",
+    "2026-12-31T00:00:00Z",
+    "Friday",
+    PACIFIC,
+  );
+  assertEquals(recurrence, {
+    pattern: { type: "weekly", interval: 1, daysOfWeek: ["Friday"] },
+    range: {
+      type: "endDate",
+      startDate: "2026-07-24",
+      endDate: "2026-12-31",
+    },
+  });
+});
+
+Deno.test("buildWeeklyRecurrence doesn't require start_date_time's weekday to match dayOfWeek", () => {
+  // 2026-07-24 is a Friday, but that's incidental — Graph anchors from
+  // startDate forward and finds the first matching weekday itself, so an
+  // unrelated day (e.g. a Monday) works exactly the same way.
+  const recurrence = buildWeeklyRecurrence(
+    "2026-07-20T00:00:00Z", // a Monday
+    "2026-12-31T00:00:00Z",
+    "Friday",
+    PACIFIC,
+  );
+  assertEquals(recurrence.range.startDate, "2026-07-20");
+  assertEquals(recurrence.pattern.daysOfWeek, ["Friday"]);
 });
 
 Deno.test("parseEmailList splits on whitespace, commas, and semicolons", () => {
@@ -492,6 +543,144 @@ Deno.test("create_calendar_event handles a full-day OOTO request sourced from a 
     dateTime: "2026-07-17T00:00:00",
     timeZone: "America/Los_Angeles",
   });
+});
+
+Deno.test('create_calendar_event attaches a weekly recurrence when is_recurring is "Yes"', async () => {
+  let capturedBody: Record<string, unknown> | undefined;
+  const slackApiStub = stubSlackApi(RESOLVABLE_ATTENDEE_EMAILS);
+
+  using _stubFetch = stub(
+    globalThis,
+    "fetch",
+    async (url: string | URL | Request, options?: RequestInit) => {
+      const request = url instanceof Request ? url : new Request(url, options);
+
+      if (request.url.includes("login.microsoftonline.com")) {
+        return new Response(
+          JSON.stringify({ access_token: "fake-access-token" }),
+          { status: 200 },
+        );
+      }
+
+      const slackResponse = await slackApiStub(request);
+      if (slackResponse) return slackResponse;
+
+      capturedBody = await request.json();
+      return new Response(
+        JSON.stringify({ id: "AAMkAGI1AAA=", webLink: "https://x" }),
+        { status: 201 },
+      );
+    },
+  );
+
+  const { error } = await CreateCalendarEvent(
+    createContext({
+      inputs: {
+        ...BASE_INPUTS,
+        request_type: "4x10 OOTO",
+        start_date_time: "2026-07-24T00:00:00Z",
+        end_date_time: "2026-07-24T00:00:00Z",
+        is_recurring: "Yes",
+        recurrence_end_date: "2026-12-31T00:00:00Z",
+        recurrence_day_of_week: "friday",
+      },
+      env: FAKE_ENV,
+    }),
+  );
+
+  assertEquals(error, undefined);
+  // Still a normal all-day event otherwise — recurrence is additive.
+  assertEquals(capturedBody?.isAllDay, true);
+  assertEquals(capturedBody?.recurrence, {
+    pattern: { type: "weekly", interval: 1, daysOfWeek: ["Friday"] },
+    range: {
+      type: "endDate",
+      startDate: "2026-07-24",
+      endDate: "2026-12-31",
+    },
+  });
+});
+
+Deno.test("create_calendar_event fails fast when is_recurring is true but recurrence fields are missing", async () => {
+  using _stubFetch = stub(
+    globalThis,
+    "fetch",
+    () => {
+      throw new Error(
+        "fetch should never be called when recurrence fields are missing",
+      );
+    },
+  );
+
+  const { outputs, error } = await CreateCalendarEvent(
+    createContext({
+      inputs: { ...BASE_INPUTS, is_recurring: "Yes" },
+      env: FAKE_ENV,
+    }),
+  );
+
+  assertExists(error);
+  assertStringIncludes(error, "recurrence_end_date");
+  assertStringIncludes(error, "recurrence_day_of_week");
+  assertEquals(outputs, undefined);
+});
+
+Deno.test("create_calendar_event fails fast on an unrecognized recurrence_day_of_week", async () => {
+  using _stubFetch = stub(
+    globalThis,
+    "fetch",
+    () => {
+      throw new Error(
+        "fetch should never be called for an unrecognized day of week",
+      );
+    },
+  );
+
+  const { outputs, error } = await CreateCalendarEvent(
+    createContext({
+      inputs: {
+        ...BASE_INPUTS,
+        is_recurring: "Yes",
+        recurrence_end_date: "2026-12-31T00:00:00Z",
+        recurrence_day_of_week: "Someday",
+      },
+      env: FAKE_ENV,
+    }),
+  );
+
+  assertExists(error);
+  assertStringIncludes(error, "Someday");
+  assertEquals(outputs, undefined);
+});
+
+Deno.test("create_calendar_event fails fast when is_partial_day and is_recurring are both true", async () => {
+  using _stubFetch = stub(
+    globalThis,
+    "fetch",
+    () => {
+      throw new Error(
+        "fetch should never be called when partial-day and recurring are both set",
+      );
+    },
+  );
+
+  const { outputs, error } = await CreateCalendarEvent(
+    createContext({
+      inputs: {
+        ...BASE_INPUTS,
+        is_partial_day: "Yes",
+        is_recurring: "Yes",
+        recurrence_end_date: "2026-12-31T00:00:00Z",
+        recurrence_day_of_week: "Friday",
+      },
+      env: FAKE_ENV,
+    }),
+  );
+
+  assertExists(error);
+  assertStringIncludes(error, "is_partial_day");
+  assertStringIncludes(error, "is_recurring");
+  assertEquals(outputs, undefined);
 });
 
 Deno.test("create_calendar_event combines resolved internal attendees with plain external emails", async () => {

@@ -179,31 +179,76 @@ the workspace-selection prompt that triggers this.
     real request came through with `submitter_name` carrying the `@` and
     `amazon_alias` not, producing the wrong title. Stripping from both sides
     makes the output correct regardless of which input happens to carry one.
-  - **`start_date_time`/`end_date_time` are calendar dates, not moments in
-    time — never timezone-convert them.** `getCalendarDateParts()` extracts
-    the literal `YYYY-MM-DD` prefix via regex and deliberately ignores
-    whatever time-of-day/offset suffix follows it (`formatTitleDate()` and
-    `getAllDayEventRange()` both build on this). Two real bugs happened here
-    before landing on this design, in this order — don't re-introduce either:
-    1. First attempt: `formatTitleDate` used `new Date(isoDateTime)` +
-       default (system-ambient) timezone formatting. The title showed the
-       wrong day near a midnight boundary.
-    2. "Fix": added an explicit `timeZone` parameter (`MS_EVENT_TIMEZONE`)
-       and ran the value through `Intl.DateTimeFormat` with that zone. This
-       made things *worse*, not better: Slack's date field sends a
-       date-only selection as midnight UTC (e.g. `2026-07-08T00:00:00Z` for
-       "July 8"), and converting midnight UTC to `America/Los_Angeles`
-       (hours behind UTC) rolls it back to the *previous* day's evening —
-       so both the title and the actual Graph event landed exactly one day
-       early, for every request, confirmed with a real two-day test
-       (submitted 7/8–7/9, got 7/7–7/8).
-    3. Actual fix: stop timezone-converting these values at all. The digits
-       in the string are the user's intent, full stop, regardless of what
-       suffix got attached to satisfy a datetime-shaped field. `timeZone`
-       (from `MS_EVENT_TIMEZONE`) is still correct and still needed — but
-       only paired with the constructed midnight strings when talking to
-       Graph (`start: { dateTime, timeZone }`), never used to decide *which
-       day* something is.
+  - **`start_date_time`/`end_date_time` arrive in two genuinely different
+    raw formats depending on which Workflow Builder field type sourced
+    them, and `resolveDateTimeParts()` has to detect which one it got —
+    don't assume either format universally.**
+    1. Plain **Date** field (Sick, Vacation, 4x10 OOTO, and OOTO's own
+       all-day case): an ISO string like `"2026-07-08T00:00:00Z"` — a
+       calendar date someone picked, not a real moment in time, even though
+       it's dressed up as midnight UTC. **Never timezone-convert this one.**
+       Two real bugs happened before landing on this, in this order — don't
+       re-introduce either:
+       1. First attempt: `formatTitleDate` used `new Date(isoDateTime)` +
+          default (system-ambient) timezone formatting. Wrong day near a
+          midnight boundary.
+       2. "Fix": ran the value through `Intl.DateTimeFormat` with
+          `MS_EVENT_TIMEZONE`. Made things *worse* — converting
+          midnight-UTC to `America/Los_Angeles` (hours behind UTC) rolls it
+          back to the *previous* day, so both the title and the actual
+          Graph event landed exactly one day early for every request
+          (confirmed live: submitted 7/8–7/9, got 7/7–7/8).
+       3. Actual fix: stop timezone-converting ISO-string values at all —
+          extract the literal `YYYY-MM-DD`/`HH:MM:SS` digits via regex,
+          full stop. `timeZone` is still needed, but only paired with the
+          constructed strings when talking to Graph, never used to decide
+          *which day* something is.
+    2. **"Date and time"** field (OOTO's `start_date_time`/`end_date_time`,
+       used for partial-day support): a bare Unix timestamp, e.g.
+       `"1784235600"` — genuinely a real, correctly-computed instant this
+       time, confirmed against a live submission (a 2:00 PM–7:00 PM Pacific
+       request came through as exactly `21:00:00Z`–next-day `02:00:00Z`).
+       **This one needs the opposite handling of the ISO-string case: it
+       must be converted into `MS_EVENT_TIMEZONE`** (via
+       `Intl.DateTimeFormat.formatToParts`) to recover the wall-clock
+       date/time actually picked. Real bug: this wasn't handled at all
+       originally, and every OOTO submission (partial-day or not, since
+       OOTO's fields are Date-and-time unconditionally) crashed with
+       `Expected an ISO date string, got "1784235600"` until
+       `resolveDateTimeParts()` learned to detect and handle both formats.
+  - **`is_partial_day`/`is_recurring` are strings ("Yes"/"No"), not
+    booleans — don't change these back to `Schema.types.boolean`.** A
+    boolean-typed step input can't be mapped to a per-submission variable in
+    Workflow Builder's step configuration; it only renders as a fixed
+    checkbox, the same value for every run regardless of what the form
+    collected. Discovered live when `is_partial_day` was first built as a
+    boolean and the checkbox had no way to map a variable at all. Matched
+    case-insensitively via `isPartialDayRequest()`/`isRecurringRequest()`,
+    same pattern as `getCategoryForRequestType()`.
+  - `is_partial_day` (OOTO only): when true, `getPartialDayEventRange()` is
+    used instead of `getAllDayEventRange()` — real clock times,
+    `isAllDay: false`. When false/absent, the all-day path never even reads
+    the time-of-day portion of `start_date_time`/`end_date_time`, so it's
+    safe regardless of what hours happen to be embedded in the raw value
+    (confirmed: a full-day request with real shift hours like 9am–5:30pm
+    still produces a correct all-day event when `is_partial_day` is "No").
+  - `is_recurring`/`recurrence_end_date`/`recurrence_day_of_week` (4x10 OOTO
+    only): when true, `buildWeeklyRecurrence()` attaches a Graph `recurrence`
+    object (weekly pattern + bounded `endDate` range) to an otherwise-normal
+    all-day event. **`recurrence_end_date` is always required when
+    `is_recurring` is true — never build a "no end" / indefinite option** —
+    an open-ended recurring day-off doesn't account for a schedule changing,
+    so every recurring request needs a bounded horizon and resubmission to
+    continue past it. `recurrence_day_of_week` is matched case-insensitively
+    against the seven day names via `normalizeDayOfWeek()`, sourced from an
+    existing single-select dropdown — it does **not** need to match
+    `start_date_time`'s actual weekday; Graph's `range.startDate` just
+    anchors "start generating from here forward" and finds the first
+    matching weekday itself. `is_partial_day` and `is_recurring` are
+    mutually exclusive — the handler rejects a request that sets both
+    rather than picking one silently. No self-service update/cancel
+    capability exists for a recurring series yet — see README's "Recurring
+    requests (4x10 OOTO)" section.
   - Env vars (`env` destructured from the handler's context, not
     `Deno.env`): `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`,
     `MS_SHARED_MAILBOX`, `MS_EVENT_TIMEZONE`. All required-but-missing cases
@@ -229,21 +274,17 @@ the workspace-selection prompt that triggers this.
   (patching each attendee's own event copy) requires Graph permissions scoped
   to every attendee's mailbox, a much bigger ask of IT.
 
-## Current blocking dependency
+## Current status
 
-IT has responded with the finalized setup (mailbox, endpoint, permission
-scoping, categories — see README's "Getting credentials from IT" section),
-but the actual Tenant ID/Client ID/Client Secret values are not yet
-necessarily in `.env` — verify `.env` is present and actually populated
-before claiming an end-to-end test exercised the real Graph API call. Also
-note: give it a few minutes after `.env` is first populated before the very
-first real API call, since IT's permission scoping takes a short time to
-propagate.
+This app is fully deployed and running live (`slack deploy`, production app
+`A0BGD5F67RQ` in Emtech, LLC) — not blocked on anything. Treat it as a
+production app when making changes, not a project still being set up.
+Verify against README's Status checklist before assuming otherwise.
 
 ## Operational considerations once deployed (see README for detail)
 
-`slack run` is local-dev-only (needs this machine/terminal running) — real
-usage requires `slack deploy` to Slack-hosted infra, plus `slack env add` for
-each production env var (separate from local `.env`). Client secret expires
-2027-07-07 (IT has their own rotation reminder) — an autonomous deployment
-will fail silently post-expiration until `MS_CLIENT_SECRET` is rotated.
+`slack run` is local-dev-only (needs this machine/terminal running), used for
+local iteration before `slack deploy`ing a change to production — it is not
+how the app runs day-to-day. Client secret expires 2027-07-07 (IT has their
+own rotation reminder) — an autonomous deployment will fail silently
+post-expiration until `MS_CLIENT_SECRET` is rotated.
