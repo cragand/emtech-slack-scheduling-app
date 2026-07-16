@@ -76,8 +76,12 @@ Workflow Builder workflow (built in Slack UI, not in this repo)
 - [x] Added `is_recurring`/`recurrence_end_date`/`recurrence_day_of_week` so
       4x10 OOTO requests can recur weekly instead of requiring a fresh
       submission every week — see
-      [Recurring requests (4x10 OOTO)](#recurring-requests-4x10-ooto). Built and
-      unit-tested; not yet confirmed with a real live run
+      [Recurring requests (4x10 OOTO)](#recurring-requests-4x10-ooto). Confirmed
+      working with a real live run, generating correct occurrences across
+      multiple actual weeks, not just at initial creation
+- [x] All four purpose-specific workflows (Sick, Vacation, OOTO, 4x10 OOTO) live
+      and confirmed working end-to-end. Feature-complete; currently awaiting
+      management review and approval
 
 This app is fully deployed and running live — no local `slack run` process needs
 to stay on for it to work. See
