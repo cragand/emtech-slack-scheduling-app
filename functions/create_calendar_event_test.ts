@@ -6,6 +6,7 @@ import CreateCalendarEvent, {
   getAllDayEventRange,
   getCategoryForRequestType,
   getPartialDayEventRange,
+  isPartialDayRequest,
   parseEmailList,
   stripLeadingAt,
 } from "./create_calendar_event.ts";
@@ -165,6 +166,16 @@ Deno.test("getPartialDayEventRange uses the literal date and time-of-day, unlike
   assertEquals(range.end, "2026-07-20T13:30:00");
 });
 
+Deno.test("isPartialDayRequest matches 'yes' regardless of case or surrounding whitespace", () => {
+  assertEquals(isPartialDayRequest("Yes"), true);
+  assertEquals(isPartialDayRequest("yes"), true);
+  assertEquals(isPartialDayRequest("YES"), true);
+  assertEquals(isPartialDayRequest("  Yes  "), true);
+  assertEquals(isPartialDayRequest("No"), false);
+  assertEquals(isPartialDayRequest(undefined), false);
+  assertEquals(isPartialDayRequest(""), false);
+});
+
 Deno.test("parseEmailList splits on whitespace, commas, and semicolons", () => {
   assertEquals(
     parseEmailList("a@x.com b@y.com"),
@@ -286,7 +297,7 @@ Deno.test("create_calendar_event happy path sends the expected Graph request", a
   );
 });
 
-Deno.test("create_calendar_event creates a timed (non-all-day) event when is_partial_day is true", async () => {
+Deno.test('create_calendar_event creates a timed (non-all-day) event when is_partial_day is "Yes"', async () => {
   let capturedBody: Record<string, unknown> | undefined;
   const slackApiStub = stubSlackApi(RESOLVABLE_ATTENDEE_EMAILS);
 
@@ -319,7 +330,7 @@ Deno.test("create_calendar_event creates a timed (non-all-day) event when is_par
       inputs: {
         ...BASE_INPUTS,
         request_type: "OOTO",
-        is_partial_day: true,
+        is_partial_day: "Yes",
         start_date_time: "2026-07-20T09:00:00",
         end_date_time: "2026-07-20T13:30:00",
       },

@@ -62,9 +62,9 @@ export const CreateCalendarEventDefinition = DefineFunction({
           "Additional external attendees (e.g. non-org POCs/clients with no Slack account) as a single string of email addresses separated by whitespace, commas, or semicolons — e.g. from a List's plain Text column.",
       },
       is_partial_day: {
-        type: Schema.types.boolean,
+        type: Schema.types.string,
         description:
-          "Whether this request covers only part of a day rather than the full day(s). When true, the time-of-day portions of start_date_time/end_date_time are used to create a timed (non-all-day) event instead of being ignored. Optional — omitted entirely by workflows that don't support partial days (Sick, Vacation, 4x10 OOTO), which keeps them on the existing all-day behavior untouched.",
+          "Whether this request covers only part of a day rather than the full day(s) — a string rather than a boolean because boolean-typed inputs can't be mapped to a per-submission variable in Workflow Builder's step configuration (they only render as a fixed checkbox). Sourced from a 'Yes'/'No' dropdown; matched case-insensitively against \"yes\" via isPartialDayRequest(). When true, the time-of-day portions of start_date_time/end_date_time are used to create a timed (non-all-day) event instead of being ignored. Optional — omitted entirely by workflows that don't support partial days (Sick, Vacation, 4x10 OOTO), which keeps them on the existing all-day behavior untouched.",
       },
     },
     required: [
@@ -244,6 +244,13 @@ export function getPartialDayEventRange(
   };
 }
 
+// Matches case-insensitively (and trims whitespace) against "yes", same
+// approach as getCategoryForRequestType — the dropdown's exact wording/case
+// shouldn't matter.
+export function isPartialDayRequest(value: string | undefined): boolean {
+  return (value ?? "").trim().toLowerCase() === "yes";
+}
+
 // Computes the start/end dateTime strings for an all-day Graph event. Graph
 // requires all-day start/end to both be midnight (paired with a timeZone by
 // the caller), with an *exclusive* end — i.e., the day after the last day
@@ -410,7 +417,8 @@ export default SlackFunction(
       ),
     ];
 
-    const range = is_partial_day
+    const partialDay = isPartialDayRequest(is_partial_day);
+    const range = partialDay
       ? getPartialDayEventRange(start_date_time, end_date_time)
       : getAllDayEventRange(start_date_time, end_date_time);
 
@@ -419,7 +427,7 @@ export default SlackFunction(
       body: { contentType: "Text", content: description ?? "" },
       start: { dateTime: range.start, timeZone },
       end: { dateTime: range.end, timeZone },
-      isAllDay: !is_partial_day,
+      isAllDay: !partialDay,
       location: { displayName: location ?? "" },
       attendees,
       // Keeps the shared mailbox's own calendar entry shown as free; does not
