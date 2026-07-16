@@ -35,12 +35,12 @@ export const CreateCalendarEventDefinition = DefineFunction({
       start_date_time: {
         type: Schema.types.string,
         description:
-          "First day of the request, ISO 8601 (e.g. 2026-07-10T09:00:00). Always creates a full-day event — the time-of-day portion is ignored.",
+          "First day of the request, ISO 8601 (e.g. 2026-07-10T09:00:00). Creates a full-day event by default — the time-of-day portion is ignored unless is_partial_day is true, in which case it's used as the event's real start time.",
       },
       end_date_time: {
         type: Schema.types.string,
         description:
-          "Last day of the request, inclusive (e.g. a single-day request has the same date as start_date_time). ISO 8601; time-of-day is ignored.",
+          "Last day of the request, inclusive (e.g. a single-day request has the same date as start_date_time). ISO 8601; time-of-day is ignored unless is_partial_day is true, in which case it's used as the event's real end time.",
       },
       description: {
         type: Schema.types.string,
@@ -60,6 +60,11 @@ export const CreateCalendarEventDefinition = DefineFunction({
         type: Schema.types.string,
         description:
           "Additional external attendees (e.g. non-org POCs/clients with no Slack account) as a single string of email addresses separated by whitespace, commas, or semicolons — e.g. from a List's plain Text column.",
+      },
+      is_partial_day: {
+        type: Schema.types.boolean,
+        description:
+          "Whether this request covers only part of a day rather than the full day(s). When true, the time-of-day portions of start_date_time/end_date_time are used to create a timed (non-all-day) event instead of being ignored. Optional — omitted entirely by workflows that don't support partial days (Sick, Vacation, 4x10 OOTO), which keeps them on the existing all-day behavior untouched.",
       },
     },
     required: [
@@ -196,6 +201,49 @@ function toMidnightIso({ year, month, day }: DateParts): string {
   return `${year}-${pad(month)}-${pad(day)}T00:00:00`;
 }
 
+type TimeParts = { hour: number; minute: number; second: number };
+
+// Extracts the literal "HH:MM:SS" time-of-day from an ISO date/datetime
+// string, the same "take the literal digits, don't interpret/convert them"
+// approach getCalendarDateParts uses for the date portion — see that
+// function's comment for why a real bug already happened from doing
+// anything cleverer with a Slack-sourced date/time value.
+function getTimeOfDayParts(isoDateTime: string): TimeParts {
+  const match = isoDateTime.match(/T(\d{2}):(\d{2}):(\d{2})/);
+  if (!match) {
+    throw new Error(`Expected a time-of-day in "${isoDateTime}"`);
+  }
+  const [, hour, minute, second] = match;
+  return { hour: Number(hour), minute: Number(minute), second: Number(second) };
+}
+
+function toLocalIso(parts: DateParts, time: TimeParts): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${
+    pad(time.hour)
+  }:${pad(time.minute)}:${pad(time.second)}`;
+}
+
+// Computes the start/end dateTime strings for a partial-day (timed, non-
+// all-day) Graph event, using the literal date *and* time-of-day from
+// startDateTime/endDateTime directly — unlike the all-day path, the time
+// portion is meaningful here, not discarded.
+export function getPartialDayEventRange(
+  startDateTime: string,
+  endDateTime: string,
+): { start: string; end: string } {
+  return {
+    start: toLocalIso(
+      getCalendarDateParts(startDateTime),
+      getTimeOfDayParts(startDateTime),
+    ),
+    end: toLocalIso(
+      getCalendarDateParts(endDateTime),
+      getTimeOfDayParts(endDateTime),
+    ),
+  };
+}
+
 // Computes the start/end dateTime strings for an all-day Graph event. Graph
 // requires all-day start/end to both be midnight (paired with a timeZone by
 // the caller), with an *exclusive* end — i.e., the day after the last day
@@ -294,6 +342,7 @@ export default SlackFunction(
       location,
       additional_attendees,
       external_attendees,
+      is_partial_day,
     } = inputs;
 
     const mailbox = env["MS_SHARED_MAILBOX"];
@@ -361,14 +410,16 @@ export default SlackFunction(
       ),
     ];
 
-    const allDayRange = getAllDayEventRange(start_date_time, end_date_time);
+    const range = is_partial_day
+      ? getPartialDayEventRange(start_date_time, end_date_time)
+      : getAllDayEventRange(start_date_time, end_date_time);
 
     const eventBody = {
       subject: title,
       body: { contentType: "Text", content: description ?? "" },
-      start: { dateTime: allDayRange.start, timeZone },
-      end: { dateTime: allDayRange.end, timeZone },
-      isAllDay: true,
+      start: { dateTime: range.start, timeZone },
+      end: { dateTime: range.end, timeZone },
+      isAllDay: !is_partial_day,
       location: { displayName: location ?? "" },
       attendees,
       // Keeps the shared mailbox's own calendar entry shown as free; does not

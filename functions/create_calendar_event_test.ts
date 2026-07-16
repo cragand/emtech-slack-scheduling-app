@@ -5,6 +5,7 @@ import CreateCalendarEvent, {
   formatTitleDate,
   getAllDayEventRange,
   getCategoryForRequestType,
+  getPartialDayEventRange,
   parseEmailList,
   stripLeadingAt,
 } from "./create_calendar_event.ts";
@@ -155,6 +156,15 @@ Deno.test("getAllDayEventRange ignores time-of-day and offset entirely", () => {
   assertEquals(range.end, "2026-07-10T00:00:00");
 });
 
+Deno.test("getPartialDayEventRange uses the literal date and time-of-day, unlike the all-day path", () => {
+  const range = getPartialDayEventRange(
+    "2026-07-20T09:00:00",
+    "2026-07-20T13:30:00",
+  );
+  assertEquals(range.start, "2026-07-20T09:00:00");
+  assertEquals(range.end, "2026-07-20T13:30:00");
+});
+
 Deno.test("parseEmailList splits on whitespace, commas, and semicolons", () => {
   assertEquals(
     parseEmailList("a@x.com b@y.com"),
@@ -274,6 +284,59 @@ Deno.test("create_calendar_event happy path sends the expected Graph request", a
     outputs?.web_link,
     "https://outlook.office.com/calendar/item/AAMkAGI1AAA%3D",
   );
+});
+
+Deno.test("create_calendar_event creates a timed (non-all-day) event when is_partial_day is true", async () => {
+  let capturedBody: Record<string, unknown> | undefined;
+  const slackApiStub = stubSlackApi(RESOLVABLE_ATTENDEE_EMAILS);
+
+  using _stubFetch = stub(
+    globalThis,
+    "fetch",
+    async (url: string | URL | Request, options?: RequestInit) => {
+      const request = url instanceof Request ? url : new Request(url, options);
+
+      if (request.url.includes("login.microsoftonline.com")) {
+        return new Response(
+          JSON.stringify({ access_token: "fake-access-token" }),
+          { status: 200 },
+        );
+      }
+
+      const slackResponse = await slackApiStub(request);
+      if (slackResponse) return slackResponse;
+
+      capturedBody = await request.json();
+      return new Response(
+        JSON.stringify({ id: "AAMkAGI1AAA=", webLink: "https://x" }),
+        { status: 201 },
+      );
+    },
+  );
+
+  const { error } = await CreateCalendarEvent(
+    createContext({
+      inputs: {
+        ...BASE_INPUTS,
+        request_type: "OOTO",
+        is_partial_day: true,
+        start_date_time: "2026-07-20T09:00:00",
+        end_date_time: "2026-07-20T13:30:00",
+      },
+      env: FAKE_ENV,
+    }),
+  );
+
+  assertEquals(error, undefined);
+  assertEquals(capturedBody?.isAllDay, false);
+  assertEquals(capturedBody?.start, {
+    dateTime: "2026-07-20T09:00:00",
+    timeZone: "America/Los_Angeles",
+  });
+  assertEquals(capturedBody?.end, {
+    dateTime: "2026-07-20T13:30:00",
+    timeZone: "America/Los_Angeles",
+  });
 });
 
 Deno.test("create_calendar_event combines resolved internal attendees with plain external emails", async () => {
