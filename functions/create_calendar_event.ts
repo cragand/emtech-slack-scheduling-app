@@ -145,32 +145,90 @@ const SHORT_MONTH_NAMES = [
   "Dec",
 ];
 
-// Extracts the literal "YYYY-MM-DD" prefix of an ISO date/datetime string.
+type TimeParts = { hour: number; minute: number; second: number };
+
+const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})/;
+const UNIX_TIMESTAMP_PATTERN = /^\d+$/;
+
+// Slack sends date/time values in two genuinely different formats depending
+// on which List/form field type they came from, and each needs the opposite
+// handling:
 //
-// start_date_time / end_date_time represent a calendar date someone picked
-// (via a date picker) — there's no real time-of-day or timezone meaning
-// intended, even though the raw value may carry a time/offset suffix (e.g.
-// "T00:00:00Z") as an artifact of the Slack List field's storage format.
-// A real bug already happened from getting this wrong: treating that
-// midnight-UTC suffix as a genuine moment in time and converting it to
-// America/Los_Angeles (hours behind UTC) rolled every date back by one full
-// day. The fix is to never timezone-convert these values at all — the
-// digits the user picked are the answer, regardless of what suffix is
-// attached.
-function getCalendarDateParts(isoDateTime: string): DateParts {
-  const match = isoDateTime.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (!match) {
-    throw new Error(`Expected an ISO date string, got "${isoDateTime}"`);
+// - A plain "Date" field (Sick, Vacation, 4x10 OOTO, and OOTO's own all-day
+//   case) sends an ISO string like "2026-07-08T00:00:00Z" — but that's a
+//   calendar date someone picked, not a real moment in time, even though it's
+//   dressed up as midnight UTC. A real bug already shipped from getting this
+//   wrong: converting that midnight-UTC suffix to America/Los_Angeles (hours
+//   behind UTC) rolled every date back by one full day. The fix there is to
+//   never timezone-convert it at all — take the literal digits as-is.
+// - A "Date and time" field (used for OOTO's partial-day support) sends a
+//   bare Unix timestamp instead, e.g. "1784235600" — genuinely a real moment
+//   in time this time, confirmed against a live test (a 2:00 PM Pacific
+//   submission came through as exactly 21:00 UTC). This one needs the
+//   opposite handling: it must be converted into timeZone to recover the
+//   wall-clock date/time that was actually picked.
+function resolveDateTimeParts(
+  value: string,
+  timeZone: string,
+): { date: DateParts; time: TimeParts } {
+  const isoMatch = value.match(ISO_DATE_PATTERN);
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch;
+    const timeMatch = value.match(/T(\d{2}):(\d{2}):(\d{2})/);
+    const [, hour, minute, second] = timeMatch ?? [, "0", "0", "0"];
+    return {
+      date: { year: Number(year), month: Number(month), day: Number(day) },
+      time: {
+        hour: Number(hour),
+        minute: Number(minute),
+        second: Number(second),
+      },
+    };
   }
-  const [, year, month, day] = match;
-  return { year: Number(year), month: Number(month), day: Number(day) };
+
+  if (UNIX_TIMESTAMP_PATTERN.test(value)) {
+    const instant = new Date(Number(value) * 1000);
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+    const parts = formatter.formatToParts(instant);
+    const part = (type: string) =>
+      Number(parts.find((p) => p.type === type)?.value);
+    return {
+      date: { year: part("year"), month: part("month"), day: part("day") },
+      time: {
+        hour: part("hour") % 24,
+        minute: part("minute"),
+        second: part("second"),
+      },
+    };
+  }
+
+  throw new Error(
+    `Expected an ISO date string or Unix timestamp, got "${value}"`,
+  );
+}
+
+function getCalendarDateParts(value: string, timeZone: string): DateParts {
+  return resolveDateTimeParts(value, timeZone).date;
+}
+
+function getTimeOfDayParts(value: string, timeZone: string): TimeParts {
+  return resolveDateTimeParts(value, timeZone).time;
 }
 
 // Title format: "@<amazon alias> - <request type> - <start date> - <submitter name>"
 // The year is deliberately omitted — it's always obvious from the calendar
 // page the event appears on, and including it just added noise.
-export function formatTitleDate(isoDateTime: string): string {
-  const { month, day } = getCalendarDateParts(isoDateTime);
+export function formatTitleDate(isoDateTime: string, timeZone: string): string {
+  const { month, day } = getCalendarDateParts(isoDateTime, timeZone);
   return `${SHORT_MONTH_NAMES[month - 1]} ${day}`;
 }
 
@@ -201,22 +259,6 @@ function toMidnightIso({ year, month, day }: DateParts): string {
   return `${year}-${pad(month)}-${pad(day)}T00:00:00`;
 }
 
-type TimeParts = { hour: number; minute: number; second: number };
-
-// Extracts the literal "HH:MM:SS" time-of-day from an ISO date/datetime
-// string, the same "take the literal digits, don't interpret/convert them"
-// approach getCalendarDateParts uses for the date portion — see that
-// function's comment for why a real bug already happened from doing
-// anything cleverer with a Slack-sourced date/time value.
-function getTimeOfDayParts(isoDateTime: string): TimeParts {
-  const match = isoDateTime.match(/T(\d{2}):(\d{2}):(\d{2})/);
-  if (!match) {
-    throw new Error(`Expected a time-of-day in "${isoDateTime}"`);
-  }
-  const [, hour, minute, second] = match;
-  return { hour: Number(hour), minute: Number(minute), second: Number(second) };
-}
-
 function toLocalIso(parts: DateParts, time: TimeParts): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${
@@ -231,15 +273,16 @@ function toLocalIso(parts: DateParts, time: TimeParts): string {
 export function getPartialDayEventRange(
   startDateTime: string,
   endDateTime: string,
+  timeZone: string,
 ): { start: string; end: string } {
   return {
     start: toLocalIso(
-      getCalendarDateParts(startDateTime),
-      getTimeOfDayParts(startDateTime),
+      getCalendarDateParts(startDateTime, timeZone),
+      getTimeOfDayParts(startDateTime, timeZone),
     ),
     end: toLocalIso(
-      getCalendarDateParts(endDateTime),
-      getTimeOfDayParts(endDateTime),
+      getCalendarDateParts(endDateTime, timeZone),
+      getTimeOfDayParts(endDateTime, timeZone),
     ),
   };
 }
@@ -262,9 +305,13 @@ export function isPartialDayRequest(value: string | undefined): boolean {
 export function getAllDayEventRange(
   startDateTime: string,
   endDateTime: string,
+  timeZone: string,
 ): { start: string; end: string } {
-  const startParts = getCalendarDateParts(startDateTime);
-  const endParts = addCalendarDays(getCalendarDateParts(endDateTime), 1);
+  const startParts = getCalendarDateParts(startDateTime, timeZone);
+  const endParts = addCalendarDays(
+    getCalendarDateParts(endDateTime, timeZone),
+    1,
+  );
   return {
     start: toMidnightIso(startParts),
     end: toMidnightIso(endParts),
@@ -382,7 +429,7 @@ export default SlackFunction(
     }
 
     const title = `@${stripLeadingAt(amazon_alias)} - ${request_type} - ${
-      formatTitleDate(start_date_time)
+      formatTitleDate(start_date_time, timeZone)
     } - ${stripLeadingAt(submitter_name)}`;
 
     // additional_attendees are Slack user references (e.g. a List's Person
@@ -419,8 +466,8 @@ export default SlackFunction(
 
     const partialDay = isPartialDayRequest(is_partial_day);
     const range = partialDay
-      ? getPartialDayEventRange(start_date_time, end_date_time)
-      : getAllDayEventRange(start_date_time, end_date_time);
+      ? getPartialDayEventRange(start_date_time, end_date_time, timeZone)
+      : getAllDayEventRange(start_date_time, end_date_time, timeZone);
 
     const eventBody = {
       subject: title,

@@ -94,28 +94,39 @@ Deno.test("stripLeadingAt removes a leading @ and any following whitespace", () 
   assertEquals(stripLeadingAt("cragandb"), "cragandb");
 });
 
+const PACIFIC = "America/Los_Angeles";
+
 Deno.test("formatTitleDate uses the literal date, ignoring any time/offset suffix", () => {
-  assertEquals(formatTitleDate("2026-08-01T00:00:00Z"), "Aug 1");
-  assertEquals(formatTitleDate("2026-08-01T23:59:00Z"), "Aug 1");
-  assertEquals(formatTitleDate("2026-08-01T09:00:00"), "Aug 1");
+  assertEquals(formatTitleDate("2026-08-01T00:00:00Z", PACIFIC), "Aug 1");
+  assertEquals(formatTitleDate("2026-08-01T23:59:00Z", PACIFIC), "Aug 1");
+  assertEquals(formatTitleDate("2026-08-01T09:00:00", PACIFIC), "Aug 1");
 });
 
 Deno.test("formatTitleDate omits the year", () => {
-  assertEquals(formatTitleDate("2026-08-01T00:00:00Z"), "Aug 1");
-  assertEquals(formatTitleDate("2027-01-15T00:00:00Z"), "Jan 15");
+  assertEquals(formatTitleDate("2026-08-01T00:00:00Z", PACIFIC), "Aug 1");
+  assertEquals(formatTitleDate("2027-01-15T00:00:00Z", PACIFIC), "Jan 15");
 });
 
 Deno.test("formatTitleDate does not roll a midnight-UTC date back a day (regression)", () => {
   // This is the exact bug that was reported: a date-only value serialized
   // as midnight UTC ("2026-07-08T00:00:00Z") was being timezone-converted
   // to America/Los_Angeles, landing on July 7 evening instead of July 8.
-  assertEquals(formatTitleDate("2026-07-08T00:00:00Z"), "Jul 8");
+  assertEquals(formatTitleDate("2026-07-08T00:00:00Z", PACIFIC), "Jul 8");
+});
+
+Deno.test("formatTitleDate converts a Unix timestamp into the target timezone (regression)", () => {
+  // Real bug: a "Date and time" field (used for OOTO's partial-day support)
+  // sends a bare Unix timestamp, not an ISO string, and the code crashed
+  // trying to parse it as one. This is the exact value from that report:
+  // 1784235600 = 2026-07-16T21:00:00Z = 2026-07-16T14:00:00 Pacific.
+  assertEquals(formatTitleDate("1784235600", PACIFIC), "Jul 16");
 });
 
 Deno.test("getAllDayEventRange covers a single day with an exclusive end", () => {
   const range = getAllDayEventRange(
     "2026-07-09T00:00:00Z",
     "2026-07-09T00:00:00Z",
+    PACIFIC,
   );
   assertEquals(range.start, "2026-07-09T00:00:00");
   assertEquals(range.end, "2026-07-10T00:00:00");
@@ -127,6 +138,7 @@ Deno.test("getAllDayEventRange spans multiple days correctly (regression)", () =
   const range = getAllDayEventRange(
     "2026-07-08T00:00:00Z",
     "2026-07-09T00:00:00Z",
+    PACIFIC,
   );
   assertEquals(range.start, "2026-07-08T00:00:00");
   assertEquals(range.end, "2026-07-10T00:00:00");
@@ -136,12 +148,14 @@ Deno.test("getAllDayEventRange rolls over month and year boundaries", () => {
   const monthRollover = getAllDayEventRange(
     "2026-07-31T00:00:00Z",
     "2026-07-31T00:00:00Z",
+    PACIFIC,
   );
   assertEquals(monthRollover.end, "2026-08-01T00:00:00");
 
   const yearRollover = getAllDayEventRange(
     "2026-12-31T00:00:00Z",
     "2026-12-31T00:00:00Z",
+    PACIFIC,
   );
   assertEquals(yearRollover.end, "2027-01-01T00:00:00");
 });
@@ -152,18 +166,37 @@ Deno.test("getAllDayEventRange ignores time-of-day and offset entirely", () => {
   const range = getAllDayEventRange(
     "2026-07-09T23:00:00Z",
     "2026-07-09T05:00:00+05:00",
+    PACIFIC,
   );
   assertEquals(range.start, "2026-07-09T00:00:00");
   assertEquals(range.end, "2026-07-10T00:00:00");
+});
+
+Deno.test("getAllDayEventRange resolves a Unix timestamp via the target timezone (regression)", () => {
+  // A full-day OOTO request also goes through a "Date and time" field now
+  // (it's the same field type as the partial-day case, just unused time
+  // portion), so this path must handle a Unix timestamp too, not just ISO.
+  const range = getAllDayEventRange("1784235600", "1784235600", PACIFIC);
+  assertEquals(range.start, "2026-07-16T00:00:00");
+  assertEquals(range.end, "2026-07-17T00:00:00");
 });
 
 Deno.test("getPartialDayEventRange uses the literal date and time-of-day, unlike the all-day path", () => {
   const range = getPartialDayEventRange(
     "2026-07-20T09:00:00",
     "2026-07-20T13:30:00",
+    PACIFIC,
   );
   assertEquals(range.start, "2026-07-20T09:00:00");
   assertEquals(range.end, "2026-07-20T13:30:00");
+});
+
+Deno.test("getPartialDayEventRange converts Unix timestamps via the target timezone (regression)", () => {
+  // The exact values from the real bug report: a 2:00 PM-7:00 PM Pacific
+  // partial-day request came through as these two raw epoch seconds.
+  const range = getPartialDayEventRange("1784235600", "1784253600", PACIFIC);
+  assertEquals(range.start, "2026-07-16T14:00:00");
+  assertEquals(range.end, "2026-07-16T19:00:00");
 });
 
 Deno.test("isPartialDayRequest matches 'yes' regardless of case or surrounding whitespace", () => {
@@ -346,6 +379,117 @@ Deno.test('create_calendar_event creates a timed (non-all-day) event when is_par
   });
   assertEquals(capturedBody?.end, {
     dateTime: "2026-07-20T13:30:00",
+    timeZone: "America/Los_Angeles",
+  });
+});
+
+Deno.test("create_calendar_event handles a partial-day request sourced from a Date-and-time field's Unix timestamp (regression)", async () => {
+  // Reproduces the real reported bug end-to-end: a "Date and time" field
+  // sends a bare Unix timestamp rather than an ISO string, and the function
+  // crashed with "Expected an ISO date string, got \"1784235600\"".
+  let capturedBody: Record<string, unknown> | undefined;
+  const slackApiStub = stubSlackApi(RESOLVABLE_ATTENDEE_EMAILS);
+
+  using _stubFetch = stub(
+    globalThis,
+    "fetch",
+    async (url: string | URL | Request, options?: RequestInit) => {
+      const request = url instanceof Request ? url : new Request(url, options);
+
+      if (request.url.includes("login.microsoftonline.com")) {
+        return new Response(
+          JSON.stringify({ access_token: "fake-access-token" }),
+          { status: 200 },
+        );
+      }
+
+      const slackResponse = await slackApiStub(request);
+      if (slackResponse) return slackResponse;
+
+      capturedBody = await request.json();
+      return new Response(
+        JSON.stringify({ id: "AAMkAGI1AAA=", webLink: "https://x" }),
+        { status: 201 },
+      );
+    },
+  );
+
+  const { error } = await CreateCalendarEvent(
+    createContext({
+      inputs: {
+        ...BASE_INPUTS,
+        request_type: "OOTO",
+        is_partial_day: "Yes",
+        start_date_time: "1784235600",
+        end_date_time: "1784253600",
+      },
+      env: FAKE_ENV,
+    }),
+  );
+
+  assertEquals(error, undefined);
+  assertEquals(capturedBody?.isAllDay, false);
+  assertEquals(capturedBody?.subject, "@jdoe - OOTO - Jul 16 - John Doe");
+  assertEquals(capturedBody?.start, {
+    dateTime: "2026-07-16T14:00:00",
+    timeZone: "America/Los_Angeles",
+  });
+  assertEquals(capturedBody?.end, {
+    dateTime: "2026-07-16T19:00:00",
+    timeZone: "America/Los_Angeles",
+  });
+});
+
+Deno.test("create_calendar_event handles a full-day OOTO request sourced from a Date-and-time field (regression)", async () => {
+  // A full-day (non-partial) OOTO request goes through the same Date-and-
+  // time field type, so it must also survive a Unix-timestamp value.
+  let capturedBody: Record<string, unknown> | undefined;
+  const slackApiStub = stubSlackApi(RESOLVABLE_ATTENDEE_EMAILS);
+
+  using _stubFetch = stub(
+    globalThis,
+    "fetch",
+    async (url: string | URL | Request, options?: RequestInit) => {
+      const request = url instanceof Request ? url : new Request(url, options);
+
+      if (request.url.includes("login.microsoftonline.com")) {
+        return new Response(
+          JSON.stringify({ access_token: "fake-access-token" }),
+          { status: 200 },
+        );
+      }
+
+      const slackResponse = await slackApiStub(request);
+      if (slackResponse) return slackResponse;
+
+      capturedBody = await request.json();
+      return new Response(
+        JSON.stringify({ id: "AAMkAGI1AAA=", webLink: "https://x" }),
+        { status: 201 },
+      );
+    },
+  );
+
+  const { error } = await CreateCalendarEvent(
+    createContext({
+      inputs: {
+        ...BASE_INPUTS,
+        request_type: "OOTO",
+        start_date_time: "1784235600",
+        end_date_time: "1784235600",
+      },
+      env: FAKE_ENV,
+    }),
+  );
+
+  assertEquals(error, undefined);
+  assertEquals(capturedBody?.isAllDay, true);
+  assertEquals(capturedBody?.start, {
+    dateTime: "2026-07-16T00:00:00",
+    timeZone: "America/Los_Angeles",
+  });
+  assertEquals(capturedBody?.end, {
+    dateTime: "2026-07-17T00:00:00",
     timeZone: "America/Los_Angeles",
   });
 });
