@@ -82,6 +82,10 @@ Workflow Builder workflow (built in Slack UI, not in this repo)
 - [x] All four purpose-specific workflows (Sick, Vacation, OOTO, 4x10 OOTO) live
       and confirmed working end-to-end. Feature-complete; currently awaiting
       management review and approval
+- [x] Added a second function, `post_daily_schedule_digest`, for company-wide
+      visibility into the shared calendar — see
+      [Daily schedule digest](#daily-schedule-digest). Built and unit-tested;
+      not yet wired to a live scheduled workflow or confirmed with a real run
 
 This app is fully deployed and running live — no local `slack run` process needs
 to stay on for it to work. See
@@ -452,6 +456,59 @@ Graph API call that makes it "Free" on every attendee's calendar at once. This
 was a deliberate tradeoff (real Outlook invites were chosen over a mailbox-only
 entry) — see `functions/create_calendar_event.ts` for where this is implemented.
 
+## Daily schedule digest
+
+`functions/post_daily_schedule_digest.ts` is a second, independent function (not
+a step used by any of the four request workflows) for company-wide visibility
+into the shared calendar. It's meant to be wired to its own Workflow Builder
+workflow using a native **"On a schedule"** trigger (daily), not a form — the
+function itself does everything (reads the calendar, posts the message), so that
+workflow is just the schedule trigger plus this one step.
+
+Each run reads today's events from the shared mailbox via Graph's `calendarView`
+endpoint (not a plain `/events` GET — `calendarView` is what correctly expands a
+recurring 4x10 series into that week's specific occurrence, rather than
+returning just the series master), computing "today" in `MS_EVENT_TIMEZONE`
+rather than trusting server-local time. It posts a bulleted, clickable list —
+each line is the event's existing `subject` (the same title
+`create_calendar_event.ts` already built at creation time) wrapped as a link to
+that event's own `webLink`, e.g.:
+
+```
+Today's schedule:
+• <https://outlook.office.com/.../abc|@jsmith - Vacation - Jul 20 - Jane Smith>
+• <https://outlook.office.com/.../xyz|@jdoe - Sick - Jul 20 - John Doe>
+```
+
+If nothing is scheduled, it posts "Nothing on the schedule today." rather than
+staying silent — so the daily run being alive is itself visible, not just
+inferred from an absence of messages.
+
+Chosen over two alternatives, both discussed and set aside:
+
+- A per-request delay (Workflow Builder's native Delay step is capped at 7 days,
+  too short for a vacation submitted months out; a dynamically-created scheduled
+  trigger per request has no cap, but would need its own storage and cleanup
+  logic to cancel that trigger if the request is later edited or canceled — a
+  real feature in itself, not yet built)
+- Sick's existing "post immediately" behavior, which works because Sick is
+  always for the day it's submitted — not true for Vacation/OOTO, which can be
+  submitted well in advance
+
+This design has nothing per-request to track, cancel, or clean up — it just
+re-reads the calendar fresh every day, so an edited or canceled request is
+simply reflected (or absent) in the next digest, automatically.
+
+No new Microsoft/Azure credentials are needed — this function reuses the same
+Graph access `create_calendar_event.ts` already has (`Calendars.ReadWrite`
+inherently includes read, not just write). The shared OAuth token logic was
+extracted to `functions/lib/graph_auth.ts` so both functions use the exact same
+implementation rather than two copies silently drifting apart.
+
+To stop the daily posts, remove (or deactivate, if reversibility matters) the
+one Workflow Builder workflow using this function — nothing else references it,
+so nothing else is affected either way.
+
 ## Testing
 
 ```sh
@@ -469,6 +526,12 @@ and the missing/invalid-field error paths), and the missing-env-var /
 unrecognized-request-type / invalid-external-attendee / token-failure error
 paths — all with `fetch` mocked via `@std/testing/mock` (including Slack's own
 Web API calls), so no live credential or network call is needed to run it.
+
+`functions/post_daily_schedule_digest_test.ts` covers the digest message
+formatting (bulleted links, the missing-webLink/subject fallbacks, the "nothing
+scheduled" case), and the handler's Graph `calendarView` call and
+`chat.postMessage` call, plus its missing-env-var and Graph-failure error paths
+— same mocking approach, no live call needed.
 
 ## Deploying
 

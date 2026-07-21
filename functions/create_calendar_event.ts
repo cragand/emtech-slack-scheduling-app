@@ -1,4 +1,5 @@
 import { DefineFunction, Schema, SlackFunction } from "deno-slack-sdk/mod.ts";
+import { getGraphAccessToken } from "./lib/graph_auth.ts";
 
 /**
  * Creates a calendar event on the shared scheduling mailbox via Microsoft
@@ -105,43 +106,6 @@ export const CreateCalendarEventDefinition = DefineFunction({
     required: ["event_id"],
   },
 });
-
-async function getGraphAccessToken(
-  env: Record<string, string | undefined>,
-): Promise<string> {
-  const tenantId = env["MS_TENANT_ID"];
-  const clientId = env["MS_CLIENT_ID"];
-  const clientSecret = env["MS_CLIENT_SECRET"];
-  if (!tenantId || !clientId || !clientSecret) {
-    throw new Error(
-      "Missing MS_TENANT_ID, MS_CLIENT_ID, or MS_CLIENT_SECRET environment variable",
-    );
-  }
-
-  const response = await fetch(
-    `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        scope: "https://graph.microsoft.com/.default",
-        grant_type: "client_credentials",
-      }),
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error(
-      `Failed to acquire Graph access token: ${response.status} ${await response
-        .text()}`,
-    );
-  }
-
-  const { access_token } = await response.json();
-  return access_token as string;
-}
 
 type DateParts = { year: number; month: number; day: number };
 

@@ -83,14 +83,51 @@ the workspace-selection prompt that triggers this.
 
 ## Architecture
 
-- **`manifest.ts`** — registers `CreateCalendarEventDefinition` under
-  `functions:` (not `workflows:`). That's the specific field that makes a
-  function selectable as a step inside Slack's no-code Workflow Builder;
-  functions only referenced via a code-defined `DefineWorkflow` wouldn't show
-  up there. `outgoingDomains` must list `login.microsoftonline.com` and
-  `graph.microsoft.com` — the Deno SDK sandboxes `fetch` to declared domains.
+- **`manifest.ts`** — registers both `CreateCalendarEventDefinition` and
+  `PostDailyScheduleDigestDefinition` under `functions:` (not `workflows:`).
+  That's the specific field that makes a function selectable as a step inside
+  Slack's no-code Workflow Builder; functions only referenced via a
+  code-defined `DefineWorkflow` wouldn't show up there. `outgoingDomains` must
+  list `login.microsoftonline.com` and `graph.microsoft.com` — the Deno SDK
+  sandboxes `fetch` to declared domains.
 
-- **`functions/create_calendar_event.ts`** — the one file that matters.
+- **`functions/lib/graph_auth.ts`** — `getGraphAccessToken()`, shared by both
+  functions below. Extracted here specifically to avoid two copies of the
+  same OAuth logic drifting apart once a second function needed it — don't
+  duplicate it back into either function file.
+
+- **`functions/post_daily_schedule_digest.ts`** — a second, independent
+  function, not a step used by any of the four request workflows. Meant to
+  be wired to its own Workflow Builder workflow via a native **"On a
+  schedule"** trigger (daily), not a form — the function does everything
+  itself (reads Graph, posts to Slack), so nothing else needs building on the
+  Workflow Builder side beyond that one trigger + this one step.
+  - Uses Graph's `calendarView` endpoint, not a plain `/events` GET —
+    `calendarView` is what correctly expands a recurring 4x10 series into
+    that week's specific occurrence (with its own `webLink`), rather than
+    returning just the series master. Don't switch this to `/events` without
+    checking recurring events still show up correctly.
+  - Computes "today" via `Intl.DateTimeFormat` in `MS_EVENT_TIMEZONE`, not
+    server-local time or a raw UTC day boundary — same category of care as
+    `create_calendar_event.ts`'s date handling, just computing "now" instead
+    of parsing a submitted value.
+  - `channel_id` is a required input (`Schema.slack.types.channel_id`) —
+    typically set as a fixed value in the step config (the scheduling
+    channel), not something a human answers, same pattern as the fixed
+    `request_type`/`is_recurring` values on the 4x10 workflow.
+  - **Chosen over a per-request delayed message deliberately** — Workflow
+    Builder's native Delay step caps at 7 days (too short for a vacation
+    submitted months out), and a dynamically-created scheduled trigger per
+    request has no cap but would need its own storage + cancellation logic
+    if a request is later edited/canceled (a real feature not yet built).
+    This design has nothing per-request to track or clean up — it just
+    re-reads the calendar fresh every day. Don't "simplify" this back to a
+    per-request delay without re-solving that cancellation problem.
+  - If nothing's scheduled, it posts `"Nothing on the schedule today."`
+    rather than staying silent, so the daily run itself being alive is
+    visible, not just inferred from an absence of messages.
+
+- **`functions/create_calendar_event.ts`** — the one file that matters most.
   - `input_parameters`: `amazon_alias`, `submitter_name`, submitter email,
     request type, start/end ISO 8601 datetimes, description, location,
     `additional_attendees`, and `external_attendees` (mapped in Workflow
